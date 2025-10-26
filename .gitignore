@@ -1,0 +1,45 @@
+# Environment variables (NEVER commit these!)
+.env
+.env.local
+.env.*.local
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Backups
+backups/
+
+# Logs
+*.log
+/tmp/
+
+# API Keys & Secrets
+keys/
+*.pem
+*.key
+service-account*.json
+sa-*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Railway (local development file - Railway will set these automatically)
+.railway/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

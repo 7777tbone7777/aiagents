@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schedule Your Demo - [COMPANY NAME]</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 60px 20px;
+            border-radius: 10px;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            font-size: 1.3em;
+            opacity: 0.95;
+            font-weight: 300;
+        }
+
+        .benefits {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .benefits h2 {
+            font-size: 2em;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .benefits ul {
+            list-style: none;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .benefits li {
+            padding: 15px 0;
+            padding-left: 40px;
+            position: relative;
+            font-size: 1.1em;
+        }
+
+        .benefits li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.5em;
+        }
+
+        .screenshots {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .screenshots h2 {
+            font-size: 2em;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .screenshot-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        .screenshot-item {
+            text-align: center;
+        }
+
+        .screenshot-item img {
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+        }
+
+        .screenshot-item p {
+            color: #666;
+            font-size: 0.95em;
+        }
+
+        .cta-section {
+            background: white;
+            padding: 60px 40px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 40px;
+        }
+
+        .cta-section h2 {
+            font-size: 2.2em;
+            margin-bottom: 20px;
+        }
+
+        .cta-section p {
+            font-size: 1.2em;
+            color: #666;
+            margin-bottom: 40px;
+        }
+
+        .calendly-inline-widget {
+            min-width: 320px;
+            height: 700px;
+            margin-top: 30px;
+        }
+
+        .big-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 50px;
+            font-size: 1.5em;
+            font-weight: 600;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .big-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2em;
+            }
+
+            .subtitle {
+                font-size: 1.1em;
+            }
+
+            .screenshot-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Placeholder for screenshots - remove when adding real images */
+        .screenshot-placeholder {
+            background: linear-gradient(135deg, #e0e0e0 0%, #f5f5f5 100%);
+            height: 250px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 0.9em;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+    </style>
+
+    <!-- Calendly CSS -->
+    <link href="https://assets.calendly.com/assets/external/widget.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>See How [COMPANY NAME] Streamlines Your Payroll</h1>
+            <p class="subtitle">[YOUR VALUE PROPOSITION - e.g., "Save 10+ hours per week on background & extras payroll"]</p>
+        </header>
+
+        <div class="benefits">
+            <h2>What You'll Learn in This Demo</h2>
+            <ul>
+                <li>How to reduce payroll processing time by 50%</li>
+                <li>Automated compliance tracking for union and non-union talent</li>
+                <li>Real-time reporting for production accountants</li>
+                <li>Integration with your existing payroll systems</li>
+                <li>Custom solutions for your specific production needs</li>
+            </ul>
+        </div>
+
+        <div class="screenshots">
+            <h2>See It In Action</h2>
+            <div class="screenshot-grid">
+                <div class="screenshot-item">
+                    <!-- Replace this div with: <img src="screenshot1.jpg" alt="Dashboard view"> -->
+                    <div class="screenshot-placeholder">Screenshot 1: Dashboard<br>(Replace with your image)</div>
+                    <p>Intuitive dashboard for tracking all payroll in one place</p>
+                </div>
+                <div class="screenshot-item">
+                    <!-- Replace this div with: <img src="screenshot2.jpg" alt="Processing view"> -->
+                    <div class="screenshot-placeholder">Screenshot 2: Processing<br>(Replace with your image)</div>
+                    <p>Fast bulk processing for hundreds of extras</p>
+                </div>
+                <div class="screenshot-item">
+                    <!-- Replace this div with: <img src="screenshot3.jpg" alt="Reports view"> -->
+                    <div class="screenshot-placeholder">Screenshot 3: Reports<br>(Replace with your image)</div>
+                    <p>Export-ready reports for accounting teams</p>
+                </div>
+                <div class="screenshot-item">
+                    <!-- Replace this div with: <img src="screenshot4.jpg" alt="Compliance view"> -->
+                    <div class="screenshot-placeholder">Screenshot 4: Compliance<br>(Replace with your image)</div>
+                    <p>Automated compliance checks and alerts</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="cta-section" id="schedule">
+            <h2>Ready to See It Live?</h2>
+            <p>Schedule your personalized 30-minute demo below</p>
+
+            <!-- Calendly inline widget begin -->
+            <div class="calendly-inline-widget" data-url="YOUR_CALENDLY_LINK_HERE?hide_gdpr_banner=1&primary_color=667eea"></div>
+            <!-- Calendly inline widget end -->
+        </div>
+
+        <footer>
+            <p>&copy; 2025 [COMPANY NAME]. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <!-- Calendly JavaScript -->
+    <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
+</body>
+</html>
