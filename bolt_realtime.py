@@ -874,8 +874,7 @@ async def handle_media_stream(websocket: WebSocket):
         log(f"Traceback: {traceback.format_exc()}")
         return
 
-    async with openai_ws:
-
+    try:
         latest_media_timestamp = 0
         last_assistant_item = None
         mark_queue = []
@@ -1171,6 +1170,9 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
             if call_sid and call_sid in SESSIONS:
                 SESSIONS[call_sid]['call_failed'] = True
                 SESSIONS[call_sid]['failure_reason'] = str(e)
+    finally:
+        # Always close the OpenAI WebSocket
+        await openai_ws.close()
 
 @app.post("/status")
 async def status_callback(request: Request):
