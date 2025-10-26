@@ -1223,4 +1223,5 @@ if __name__ == "__main__":
     log(f"Starting Bolt AI Platform (Realtime API) on port {PORT}")
     log(f"Public base: {PUBLIC_BASE}")
     log(f"Voice: {VOICE}")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    # Use asyncio instead of uvloop for websockets compatibility
+    uvicorn.run(app, host="0.0.0.0", port=PORT, loop="asyncio")
