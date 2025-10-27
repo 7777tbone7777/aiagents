@@ -991,9 +991,9 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             "session": {
                                 "turn_detection": {
                                     "type": "server_vad",
-                                    "threshold": 0.7,  # Higher = less sensitive (default 0.5)
+                                    "threshold": 0.9,  # Much higher to prevent echo/feedback (default 0.5)
                                     "prefix_padding_ms": 300,  # Audio before speech (default 300ms)
-                                    "silence_duration_ms": 700  # Silence before turn ends (default 500ms)
+                                    "silence_duration_ms": 1000  # Longer silence before turn ends
                                 },
                                 "input_audio_format": "g711_ulaw",
                                 "output_audio_format": "g711_ulaw",
