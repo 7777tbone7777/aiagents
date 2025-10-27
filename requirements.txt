@@ -18,5 +18,8 @@ requests==2.31.0
 # Environment variables
 python-dotenv==1.0.0
 
+# Email service
+resend==0.8.0
+
 # SSL certificates
 certifi==2023.11.17
