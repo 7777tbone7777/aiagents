@@ -1015,6 +1015,12 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
 
                     elif data['event'] == 'stop':
                         log(f"Stream stopped: {stream_sid}")
+                        # Explicitly close OpenAI WebSocket to prevent resource leak
+                        try:
+                            await openai_ws.close()
+                            log("OpenAI WebSocket closed after Twilio stream ended")
+                        except Exception as e:
+                            log(f"Error closing OpenAI WebSocket: {e}")
                         break
 
             except WebSocketDisconnect:
