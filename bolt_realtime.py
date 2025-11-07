@@ -927,7 +927,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                         # Configure OpenAI session based on business
                         if industry == 'sales':
-                            greeting = "Hi I'm Bolt, an AI Agent with the Bolt AI Group. We build AI agents for small businesses that handle phone, SMS, and web chat—booking appointments, answering FAQs, taking orders, and syncing calendars—starting at $199/month. Who am I speaking with?"
+                            greeting = "Hi I'm Bolt with Bolt AI Group. We build AI agents that handle calls, texts, chats, and book appointments for small businesses. Who am I speaking with?"
                             system_message = f"""You are {agent_name}, an enthusiastic AI sales agent for {business_name}.
 
 CRITICAL: Your FIRST response must be EXACTLY this greeting word-for-word:
