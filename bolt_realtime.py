@@ -91,7 +91,7 @@ SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
 
 # Business configuration
-AGENT_NAME = os.getenv("AGENT_NAME", "Bolt")
+AGENT_NAME = os.getenv("AGENT_NAME", "Bella")
 COMPANY_NAME = os.getenv("COMPANY_NAME", "Bolt AI Group")
 PRODUCT_PITCH = os.getenv("PRODUCT_PITCH", "We build custom AI agents for small businesses that answer every call 24/7, book appointments automatically, handle customer questions, and ensure you never lose business to a missed call")
 MONTHLY_PRICE = os.getenv("MONTHLY_PRICE", "$199")
@@ -927,7 +927,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                         # Configure OpenAI session based on business
                         if industry == 'sales':
-                            greeting = "Hi I'm Bolt with Bolt AI Group. We build AI agents that handle calls, texts, chats, and book appointments for small businesses. Who am I speaking with?"
+                            greeting = "Hi I'm Bella with Bolt AI Group. We build AI agents that handle calls, texts, chats, and book appointments for small businesses. Who am I speaking with?"
                             system_message = f"""You are {agent_name}, an enthusiastic AI sales agent for {business_name}.
 
 CRITICAL: Your FIRST response must be EXACTLY this greeting word-for-word:
