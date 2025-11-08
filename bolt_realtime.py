@@ -1069,6 +1069,12 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             update_call_transcript(call_sid, "assistant", transcript)
                             log(f"Assistant: {transcript}")
 
+                            # Check if this is the final closing message
+                            if "thank you for your time" in transcript.lower() or "we'll be calling you" in transcript.lower():
+                                log("Final message detected - allowing audio to finish playing...")
+                                # Give audio buffer 4 seconds to fully play before call ends
+                                await asyncio.sleep(4)
+
                             # DO NOT extract from assistant responses to avoid capturing AI's mistakes
                             # Only extract from user speech
 
