@@ -1037,6 +1037,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
+                    log(f"[DEBUG] OpenAI response type: {response.get('type', 'unknown')}")
 
                     if response['type'] == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
