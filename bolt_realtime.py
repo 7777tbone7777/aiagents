@@ -1041,6 +1041,12 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                     response = json.loads(openai_message)
                     log(f"[DEBUG] OpenAI response type: {response.get('type', 'unknown')}")
 
+                    # Log failures and issues for debugging
+                    if response['type'] == 'response.done':
+                        log(f"[DEBUG] response.done details: {json.dumps(response, indent=2)}")
+                    elif response['type'] == 'conversation.item.input_audio_transcription.failed':
+                        log(f"[DEBUG] Transcription failed: {json.dumps(response, indent=2)}")
+
                     if response['type'] == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
                         audio_delta = {
