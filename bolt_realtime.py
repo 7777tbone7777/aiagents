@@ -73,6 +73,7 @@ PUBLIC_BASE = get_public_url()  # Railway in production, ngrok for local dev
 # AI configuration
 VOICE = os.getenv("VOICE", "echo")  # Options: alloy, echo, fable, onyx, nova, shimmer
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.8"))
+MODEL = "gpt-4o-realtime-preview-2024-10-01"  # OpenAI Realtime API model
 
 # WebSocket configuration
 MAX_CALL_DURATION = int(os.getenv("MAX_CALL_DURATION", "3600"))  # 1 hour default (seconds)
@@ -989,6 +990,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                         session_update = {
                             "type": "session.update",
                             "session": {
+                                "model": MODEL,  # REQUIRED: Specify the Realtime API model
                                 "turn_detection": {
                                     "type": "server_vad",
                                     "threshold": 0.6,  # Balanced sensitivity for reliable speech detection (default 0.5)
