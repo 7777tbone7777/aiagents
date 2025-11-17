@@ -847,14 +847,28 @@ def get_available_calendar_slots(days_ahead: int = 7, num_slots: int = 3) -> lis
 
     try:
         # Load service account credentials
-        if not os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
-            log(f"[WARN] Service account file not found: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
-            return []
+        # Support both file path (local) and JSON string (Railway env var)
+        google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
-        credentials = service_account.Credentials.from_service_account_file(
-            GOOGLE_CALENDAR_SERVICE_ACCOUNT,
-            scopes=['https://www.googleapis.com/auth/calendar']
-        )
+        if google_creds_json:
+            # Load from environment variable (Railway)
+            import json
+            credentials_info = json.loads(google_creds_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[INFO] Loaded Google Calendar credentials from environment variable")
+        elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
+            # Load from file (local development)
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_CALENDAR_SERVICE_ACCOUNT,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[INFO] Loaded Google Calendar credentials from file")
+        else:
+            log(f"[WARN] No Google Calendar credentials found")
+            return []
 
         service = build('calendar', 'v3', credentials=credentials)
 
@@ -921,14 +935,26 @@ def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_e
 
     try:
         # Load service account credentials
-        if not os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
-            log(f"[WARN] Service account file not found: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
-            return False
+        # Support both file path (local) and JSON string (Railway env var)
+        google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
-        credentials = service_account.Credentials.from_service_account_file(
-            GOOGLE_CALENDAR_SERVICE_ACCOUNT,
-            scopes=['https://www.googleapis.com/auth/calendar']
-        )
+        if google_creds_json:
+            # Load from environment variable (Railway)
+            import json
+            credentials_info = json.loads(google_creds_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+        elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
+            # Load from file (local development)
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_CALENDAR_SERVICE_ACCOUNT,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+        else:
+            log(f"[WARN] No Google Calendar credentials found")
+            return False
 
         service = build('calendar', 'v3', credentials=credentials)
 
