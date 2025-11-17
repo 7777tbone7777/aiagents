@@ -1203,7 +1203,9 @@ If they say "sign up", "get started", "let's do it", or YES after demo:
 
 1. Say: "Great! First, what's your name?"
 2. They tell you their name
-3. IF they haven't told you business type yet, ask: "Thanks [Name]! What type of business do you have?"
+3. ONLY ask for business type if you DON'T already know it from the demo:
+   - If coming from demo: You already know their business type - SKIP THIS STEP
+   - If direct signup (no demo): Ask "Thanks [Name]! What type of business do you have?"
 4. Say: "Perfect! Would you prefer I follow up with a call or send you an email?"
 
    IF CALL:
