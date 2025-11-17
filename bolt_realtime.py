@@ -1503,9 +1503,13 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                         }
                         try:
                             await websocket.send_json(audio_delta)
-                        except (WebSocketDisconnect, Exception) as e:
-                            # Twilio already closed - call ended, stop sending
-                            log(f"Twilio WebSocket closed while sending audio, call ended")
+                        except WebSocketDisconnect as e:
+                            # Twilio disconnected - call ended by caller
+                            log(f"Twilio WebSocket disconnected (caller hung up): {e}")
+                            break
+                        except Exception as e:
+                            # Other error sending to Twilio
+                            log(f"Error sending audio to Twilio: {type(e).__name__}: {e}")
                             break
 
                         if response.get("item_id") and response["item_id"] != last_assistant_item:
@@ -1566,6 +1570,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
 
                 # If we exit the loop naturally (not via exception), log it
                 log("OpenAI message stream ended (connection closed cleanly)")
+                log(f"[DEBUG] Loop exited naturally. Call SID: {call_sid}, Stream SID: {stream_sid}")
 
             except websockets.exceptions.ConnectionClosed as e:
                 log(f"ERROR: OpenAI WebSocket closed unexpectedly during call! Code: {e.code if hasattr(e, 'code') else 'unknown'}, Reason: {e.reason if hasattr(e, 'reason') else 'unknown'}")
