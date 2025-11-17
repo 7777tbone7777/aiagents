@@ -1709,11 +1709,37 @@ async def status_callback(request: Request):
 async def test_daily_digest():
     """Manual trigger for testing the daily digest email"""
     log("Manual test of daily digest triggered")
-    result = send_daily_digest()
-    return JSONResponse(content={
-        "status": "success" if result else "failed",
-        "message": "Daily digest email sent" if result else "Failed to send daily digest"
-    })
+
+    # Check if Supabase is configured
+    if not SUPABASE:
+        return JSONResponse(content={
+            "status": "error",
+            "message": "Supabase not configured"
+        })
+
+    # Get today's call count for debugging
+    try:
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+        result = SUPABASE.table('calls').select('*').gte('created_at', today_start.isoformat()).lte('created_at', today_end.isoformat()).execute()
+        call_count = len(result.data) if result.data else 0
+
+        # Send digest
+        digest_result = send_daily_digest()
+
+        return JSONResponse(content={
+            "status": "success" if digest_result else "failed",
+            "message": f"Found {call_count} calls today. " + ("Daily digest email sent" if digest_result else "Failed to send daily digest (check logs for details)"),
+            "call_count": call_count
+        })
+    except Exception as e:
+        log(f"Error in test-digest: {e}")
+        import traceback
+        log(f"Traceback: {traceback.format_exc()}")
+        return JSONResponse(content={
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        })
 
 # ======================== Scheduler Setup ========================
 # Initialize scheduler for daily digest
