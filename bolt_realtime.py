@@ -341,8 +341,8 @@ def send_business_owner_notification(customer_name, customer_email, customer_pho
     return send_email(owner_email, subject, body_html)
 
 def send_demo_follow_up(customer_name, customer_email, business_type):
-    """Send follow-up email after sales call"""
-    subject = f"Your AI Phone Solution for {business_type} - {COMPANY_NAME}"
+    """Send follow-up email after demo call"""
+    subject = f"Great chatting with you, {customer_name}! - {COMPANY_NAME}"
 
     # Business-specific benefits
     business_benefits = {
@@ -408,23 +408,10 @@ def send_demo_follow_up(customer_name, customer_email, business_type):
     benefits = business_benefits.get(business_type.lower().strip(), default_benefits)
     benefits_html = "\n".join([f"<li>{benefit}</li>" for benefit in benefits])
 
-    # Calendar booking button
-    calendar_button = ""
-    if CALENDAR_BOOKING_URL:
-        calendar_button = f"""
-        <div style="text-align: center; margin: 30px 0;">
-            <a href="{CALENDAR_BOOKING_URL}"
-               style="background-color: #0066cc; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                📅 Schedule Your Demo Now
-            </a>
-        </div>
-        <p style="text-align: center; color: #666; font-size: 0.9em;">
-            Or I'll reach out within 24 hours to find a time that works for you.
-        </p>
-        """
-    else:
-        calendar_button = f"""
-        <p><strong>I'll be reaching out within 24 hours to schedule your personalized demo.</strong></p>
+    # Implementation call reminder
+    calendar_button = f"""
+        <p><strong>Looking forward to our implementation call! I'll walk you through setting up your personalized AI phone agent.</strong></p>
+        <p style="color: #666;">If you have any questions before then, feel free to reply to this email.</p>
         """
 
     body_html = f"""
@@ -432,11 +419,10 @@ def send_demo_follow_up(customer_name, customer_email, business_type):
     <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #0066cc;">Hi {customer_name}!</h2>
 
-        <p>Thanks for taking the time to learn about {COMPANY_NAME}. I'm excited to show you how our AI phone solution can help your {business_type}.</p>
+        <p>Thanks for trying our demo! I hope you got a feel for how Jack can handle calls for your {business_type} business 24/7.</p>
 
-        <h3 style="color: #0066cc; border-bottom: 2px solid #0066cc; padding-bottom: 5px;">
-            How We'll Help Your {business_type.title()}:
-        </h3>
+        <p>As you saw in the demo, our AI phone solution can help your {business_type} by:</p>
+
         <ul style="line-height: 1.8;">
             {benefits_html}
         </ul>
