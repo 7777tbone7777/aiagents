@@ -1463,7 +1463,9 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             mark_queue.pop(0)
 
                     elif data['event'] == 'stop':
-                        log(f"Stream stopped: {stream_sid}")
+                        log(f"[TWILIO] Received 'stop' event from Twilio. Stream: {stream_sid}")
+                        log(f"[TWILIO] Stop event details: {json.dumps(data, indent=2)}")
+                        log(f"[TWILIO] Call duration before stop: {time.time() - stream_start_time if stream_start_time else 'unknown'}s")
                         # Explicitly close OpenAI WebSocket to prevent resource leak
                         try:
                             await openai_ws.close()
@@ -1503,13 +1505,21 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                         }
                         try:
                             await websocket.send_json(audio_delta)
+                            # Log every 10th audio chunk to avoid spam
+                            if not hasattr(send_to_twilio, 'audio_chunk_count'):
+                                send_to_twilio.audio_chunk_count = 0
+                            send_to_twilio.audio_chunk_count += 1
+                            if send_to_twilio.audio_chunk_count % 10 == 0:
+                                log(f"[AUDIO] Sent {send_to_twilio.audio_chunk_count} audio chunks to Twilio")
                         except WebSocketDisconnect as e:
                             # Twilio disconnected - call ended by caller
-                            log(f"Twilio WebSocket disconnected (caller hung up): {e}")
+                            log(f"[AUDIO] Twilio WebSocket disconnected (caller hung up): {e}")
+                            log(f"[AUDIO] Total audio chunks sent before disconnect: {getattr(send_to_twilio, 'audio_chunk_count', 0)}")
                             break
                         except Exception as e:
                             # Other error sending to Twilio
-                            log(f"Error sending audio to Twilio: {type(e).__name__}: {e}")
+                            log(f"[AUDIO] Error sending audio to Twilio: {type(e).__name__}: {e}")
+                            log(f"[AUDIO] Total audio chunks sent before error: {getattr(send_to_twilio, 'audio_chunk_count', 0)}")
                             break
 
                         if response.get("item_id") and response["item_id"] != last_assistant_item:
@@ -1528,6 +1538,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                         if transcript and call_sid:
                             update_call_transcript(call_sid, "assistant", transcript)
                             log(f"Assistant: {transcript}")
+                            log(f"[AUDIO] Transcript complete. Audio chunks sent so far: {getattr(send_to_twilio, 'audio_chunk_count', 0)}")
 
                             # Check if this is the final closing message
                             if "thank you for your time" in transcript.lower() or "we'll be calling you" in transcript.lower():
