@@ -12,6 +12,8 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
 from supabase import create_client
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 # Google Calendar imports
 try:
@@ -286,6 +288,168 @@ def send_email(to_email, subject, body_html, max_retries=3):
                 return False
 
     return False
+
+def send_instant_call_alert(call_sid, caller_phone, call_start_time):
+    """Send instant email alert when a call comes in"""
+    subject = f"🔔 Incoming Call Alert - {caller_phone}"
+
+    call_time_formatted = call_start_time.strftime("%I:%M %p") if isinstance(call_start_time, datetime) else str(call_start_time)
+
+    body_html = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <div style="background-color: #4CAF50; color: white; padding: 20px; text-align: center;">
+            <h1 style="margin: 0;">📞 New Call In Progress</h1>
+        </div>
+
+        <div style="padding: 20px;">
+            <p><strong>Call Details:</strong></p>
+            <ul style="font-size: 16px;">
+                <li><strong>Caller Phone:</strong> {caller_phone}</li>
+                <li><strong>Call Time:</strong> {call_time_formatted}</li>
+                <li><strong>Call SID:</strong> {call_sid}</li>
+            </ul>
+
+            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
+                <p style="margin: 0;"><strong>💡 Note:</strong> You'll receive another email with full call details once the call completes.</p>
+            </div>
+
+            <p style="color: #666; font-size: 14px; margin-top: 30px;">
+                This is an automated alert from your Bolt AI phone agent system.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    return send_email(BUSINESS_OWNER_EMAIL, subject, body_html)
+
+def send_daily_digest():
+    """Send daily digest with call analytics"""
+    if not SUPABASE:
+        log("Cannot send daily digest - Supabase not configured")
+        return False
+
+    try:
+        # Get today's date range
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        # Query today's calls
+        result = SUPABASE.table('calls').select('*').gte('created_at', today_start.isoformat()).lte('created_at', today_end.isoformat()).execute()
+
+        calls = result.data if result.data else []
+        total_calls = len(calls)
+
+        if total_calls == 0:
+            log("No calls today - skipping daily digest")
+            return True  # Not an error, just no calls
+
+        # Analytics
+        completed_calls = [c for c in calls if c.get('status') == 'completed']
+        failed_calls = [c for c in calls if c.get('status') in ['failed', 'busy', 'no-answer']]
+        in_progress_calls = [c for c in calls if c.get('status') == 'in-progress']
+
+        # Calculate call durations
+        total_duration = 0
+        for call in completed_calls:
+            if call.get('duration'):
+                total_duration += int(call['duration'])
+
+        avg_duration = (total_duration / len(completed_calls)) if completed_calls else 0
+        avg_duration_formatted = f"{int(avg_duration // 60)}m {int(avg_duration % 60)}s"
+
+        # Build call list HTML
+        call_rows = ""
+        for call in calls[:10]:  # Show up to 10 most recent calls
+            status_color = "#4CAF50" if call.get('status') == 'completed' else ("#f44336" if call.get('status') in ['failed', 'busy', 'no-answer'] else "#ff9800")
+            call_time = datetime.fromisoformat(call['created_at'].replace('Z', '+00:00')).strftime("%I:%M %p")
+            duration = f"{int(call.get('duration', 0) // 60)}m {int(call.get('duration', 0) % 60)}s" if call.get('duration') else "N/A"
+
+            call_rows += f"""
+            <tr>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">{call_time}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">{call.get('from_number', 'Unknown')}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;"><span style="color: {status_color}; font-weight: bold;">{call.get('status', 'unknown')}</span></td>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">{duration}</td>
+            </tr>
+            """
+
+        # Subject
+        date_str = today_start.strftime("%B %d, %Y")
+        subject = f"📊 Daily Call Report - {date_str} ({total_calls} calls)"
+
+        # Email body
+        body_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="background-color: #2196F3; color: white; padding: 20px; text-align: center;">
+                <h1 style="margin: 0;">📊 Daily Call Report</h1>
+                <p style="margin: 5px 0 0 0; font-size: 18px;">{date_str}</p>
+            </div>
+
+            <div style="padding: 20px;">
+                <!-- Summary Stats -->
+                <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 30px;">
+                    <div style="flex: 1; min-width: 200px; background-color: #e3f2fd; padding: 20px; border-radius: 8px; text-align: center;">
+                        <h2 style="margin: 0; color: #2196F3; font-size: 36px;">{total_calls}</h2>
+                        <p style="margin: 5px 0 0 0; color: #666;">Total Calls</p>
+                    </div>
+                    <div style="flex: 1; min-width: 200px; background-color: #e8f5e9; padding: 20px; border-radius: 8px; text-align: center;">
+                        <h2 style="margin: 0; color: #4CAF50; font-size: 36px;">{len(completed_calls)}</h2>
+                        <p style="margin: 5px 0 0 0; color: #666;">Completed</p>
+                    </div>
+                    <div style="flex: 1; min-width: 200px; background-color: #fff3e0; padding: 20px; border-radius: 8px; text-align: center;">
+                        <h2 style="margin: 0; color: #ff9800; font-size: 36px;">{len(in_progress_calls)}</h2>
+                        <p style="margin: 5px 0 0 0; color: #666;">In Progress</p>
+                    </div>
+                    <div style="flex: 1; min-width: 200px; background-color: #ffebee; padding: 20px; border-radius: 8px; text-align: center;">
+                        <h2 style="margin: 0; color: #f44336; font-size: 36px;">{len(failed_calls)}</h2>
+                        <p style="margin: 5px 0 0 0; color: #666;">Failed/Missed</p>
+                    </div>
+                </div>
+
+                <!-- Average Duration -->
+                <div style="background-color: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 30px;">
+                    <p style="margin: 0;"><strong>📞 Average Call Duration:</strong> {avg_duration_formatted}</p>
+                </div>
+
+                <!-- Recent Calls Table -->
+                <h3 style="margin-bottom: 15px;">Recent Calls</h3>
+                <table style="width: 100%; border-collapse: collapse; background-color: white;">
+                    <thead>
+                        <tr style="background-color: #f5f5f5;">
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Time</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Caller</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Status</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {call_rows}
+                    </tbody>
+                </table>
+
+                {f'<p style="color: #666; font-size: 14px; margin-top: 15px;"><em>Showing {min(10, total_calls)} of {total_calls} calls</em></p>' if total_calls > 10 else ''}
+
+                <hr style="margin: 30px 0;">
+                <p style="color: #666; font-size: 14px;">
+                    This daily digest is automatically sent at 11:59 PM. <br>
+                    Generated by your Bolt AI phone agent system.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+
+        log(f"Sending daily digest: {total_calls} calls today")
+        return send_email(BUSINESS_OWNER_EMAIL, subject, body_html)
+
+    except Exception as e:
+        log(f"Error generating daily digest: {e}")
+        import traceback
+        log(f"Traceback: {traceback.format_exc()}")
+        return False
 
 def send_business_owner_notification(customer_name, customer_email, customer_phone, business_type, company_name=None, contact_preference=None, appointment_display=None):
     """Notify business owner of new lead"""
@@ -1027,10 +1191,12 @@ async def handle_incoming_call(request: Request):
     call_record = create_call_record(business['id'], from_number, call_sid, to_number)
 
     # Store session
+    call_start_time = datetime.now()
     SESSIONS[call_sid] = {
         "business": business,
         "call_id": call_record['id'] if call_record else None,
         "caller_phone": from_number,
+        "call_start_time": call_start_time,
         "customer_name": None,
         "customer_email": None,
         "customer_phone": None,
@@ -1042,6 +1208,10 @@ async def handle_incoming_call(request: Request):
         "appointment_datetime": None,  # Booked slot
         "appointment_display": None  # Human-readable slot (e.g., "Tuesday at 2pm")
     }
+
+    # Send instant call alert to business owner
+    log(f"Sending instant call alert for {from_number}")
+    send_instant_call_alert(call_sid, from_number, call_start_time)
 
     # Start Media Stream
     response = VoiceResponse()
@@ -1534,6 +1704,32 @@ async def status_callback(request: Request):
         del SESSIONS[call_sid]
 
     return JSONResponse(content={"status": "ok"})
+
+@app.get("/test-digest")
+async def test_daily_digest():
+    """Manual trigger for testing the daily digest email"""
+    log("Manual test of daily digest triggered")
+    result = send_daily_digest()
+    return JSONResponse(content={
+        "status": "success" if result else "failed",
+        "message": "Daily digest email sent" if result else "Failed to send daily digest"
+    })
+
+# ======================== Scheduler Setup ========================
+# Initialize scheduler for daily digest
+scheduler = BackgroundScheduler()
+
+# Schedule daily digest at 11:59 PM every day
+scheduler.add_job(
+    send_daily_digest,
+    trigger=CronTrigger(hour=23, minute=59),
+    id='daily_digest',
+    name='Send daily call digest at 11:59 PM',
+    replace_existing=True
+)
+
+scheduler.start()
+log("Scheduler started - Daily digest will be sent at 11:59 PM")
 
 # ======================== Main ========================
 if __name__ == "__main__":
