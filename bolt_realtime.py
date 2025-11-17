@@ -326,7 +326,8 @@ def send_instant_call_alert(call_sid, caller_phone, call_start_time):
 
 def send_daily_digest():
     """Send daily digest with call analytics"""
-    if not SUPABASE:
+    supabase = get_supabase_client()
+    if not supabase:
         log("Cannot send daily digest - Supabase not configured")
         return False
 
@@ -336,7 +337,7 @@ def send_daily_digest():
         today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
 
         # Query today's calls
-        result = SUPABASE.table('calls').select('*').gte('created_at', today_start.isoformat()).lte('created_at', today_end.isoformat()).execute()
+        result = supabase.table('calls').select('*').gte('created_at', today_start.isoformat()).lte('created_at', today_end.isoformat()).execute()
 
         calls = result.data if result.data else []
         total_calls = len(calls)
@@ -1711,17 +1712,18 @@ async def test_daily_digest():
     log("Manual test of daily digest triggered")
 
     # Check if Supabase is configured
-    if not SUPABASE:
+    supabase = get_supabase_client()
+    if not supabase:
         return JSONResponse(content={
             "status": "error",
-            "message": "Supabase not configured"
+            "message": "Supabase not configured - check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables"
         })
 
     # Get today's call count for debugging
     try:
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-        result = SUPABASE.table('calls').select('*').gte('created_at', today_start.isoformat()).lte('created_at', today_end.isoformat()).execute()
+        result = supabase.table('calls').select('*').gte('created_at', today_start.isoformat()).lte('created_at', today_end.isoformat()).execute()
         call_count = len(result.data) if result.data else 0
 
         # Send digest
