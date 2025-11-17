@@ -121,14 +121,26 @@ SESSIONS = {}  # call_sid -> session data
 def get_supabase_client():
     """Get or create Supabase client (lazy initialization)"""
     global SUPABASE
+    log(f"[DEBUG] get_supabase_client() called")
+    log(f"[DEBUG] SUPABASE is None: {SUPABASE is None}")
+    log(f"[DEBUG] SUPABASE_URL exists: {bool(SUPABASE_URL)}, value: {SUPABASE_URL[:30] if SUPABASE_URL else 'None'}...")
+    log(f"[DEBUG] SUPABASE_KEY exists: {bool(SUPABASE_KEY)}, length: {len(SUPABASE_KEY) if SUPABASE_KEY else 0}")
+
     if SUPABASE is None and SUPABASE_URL and SUPABASE_KEY:
+        log(f"[DEBUG] Condition passed - attempting to create Supabase client...")
         try:
-            log(f"[DEBUG] Creating Supabase client for {SUPABASE_URL[:30]}...")
+            log(f"[DEBUG] Calling create_client() with URL: {SUPABASE_URL[:30]}...")
             SUPABASE = create_client(SUPABASE_URL, SUPABASE_KEY)
-            log(f"[DEBUG] Supabase client created successfully")
+            log(f"[DEBUG] Supabase client created successfully - type: {type(SUPABASE)}")
         except Exception as e:
             log(f"[ERROR] Failed to create Supabase client: {e}")
+            import traceback
+            log(f"[ERROR] Traceback: {traceback.format_exc()}")
             return None
+    else:
+        log(f"[DEBUG] Condition failed - returning existing SUPABASE: {SUPABASE}")
+
+    log(f"[DEBUG] Returning SUPABASE: {type(SUPABASE) if SUPABASE else 'None'}")
     return SUPABASE
 
 # ======================== Logging ========================
