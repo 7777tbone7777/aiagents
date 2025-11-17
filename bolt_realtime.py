@@ -5,13 +5,22 @@ Real-time voice conversations with instant responses - no more long pauses!
 """
 import os, json, base64, asyncio, websockets, ssl, re, time, requests
 import certifi
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
 from supabase import create_client
+
+# Google Calendar imports
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    GOOGLE_CALENDAR_AVAILABLE = True
+except ImportError:
+    GOOGLE_CALENDAR_AVAILABLE = False
+    print("[WARN] Google Calendar libraries not installed. Calendar booking disabled.")
 
 load_dotenv()
 
@@ -97,6 +106,10 @@ COMPANY_NAME = os.getenv("COMPANY_NAME", "Bolt AI Group")
 PRODUCT_PITCH = os.getenv("PRODUCT_PITCH", "We build custom AI agents for small businesses that answer every call 24/7, book appointments automatically, handle customer questions, and ensure you never lose business to a missed call")
 MONTHLY_PRICE = os.getenv("MONTHLY_PRICE", "$199")
 CALENDAR_BOOKING_URL = os.getenv("CALENDAR_BOOKING_URL", "")
+
+# Google Calendar configuration
+GOOGLE_CALENDAR_EMAIL = os.getenv("GOOGLE_CALENDAR_EMAIL", "boltaigroup@gmail.com")
+GOOGLE_CALENDAR_SERVICE_ACCOUNT = os.getenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT", "/Users/anthony/aiagent/keys/calendar-sa.json")
 
 # ======================== Globals ========================
 app = FastAPI()
@@ -274,11 +287,28 @@ def send_email(to_email, subject, body_html, max_retries=3):
 
     return False
 
-def send_business_owner_notification(customer_name, customer_email, customer_phone, business_type, company_name=None):
+def send_business_owner_notification(customer_name, customer_email, customer_phone, business_type, company_name=None, contact_preference=None, appointment_display=None):
     """Notify business owner of new lead"""
     owner_email = BUSINESS_OWNER_EMAIL
     company_display = f" ({company_name})" if company_name else ""
     subject = f"New Lead: {business_type}{company_display}"
+
+    # Contact preference display
+    if contact_preference == "call":
+        contact_method = f"<strong>CALL</strong> at {customer_phone or 'Not provided'}"
+    elif contact_preference == "email":
+        contact_method = f"<strong>EMAIL</strong> at {customer_email or 'Not provided'}"
+    else:
+        contact_method = "Not specified"
+
+    # Appointment info
+    appointment_info = ""
+    if appointment_display:
+        appointment_info = f"""
+        <p style="background-color: #e8f5e9; padding: 15px; border-left: 4px solid #4caf50;">
+            <strong>📅 Implementation Call Scheduled:</strong> {appointment_display}
+        </p>
+        """
 
     body_html = f"""
     <html>
@@ -293,11 +323,12 @@ def send_business_owner_notification(customer_name, customer_email, customer_pho
             <li><strong>Contact Name:</strong> {customer_name or 'Not provided'}</li>
             <li><strong>Email:</strong> {customer_email or 'Not provided'}</li>
             <li><strong>Phone:</strong> {customer_phone or 'Not provided'}</li>
+            <li><strong>Preferred Contact Method:</strong> {contact_method}</li>
         </ul>
 
-        <p>A follow-up email with demo information has been sent to the customer.</p>
+        {appointment_info}
 
-        <p><strong>Next Steps:</strong> Reach out to schedule their demo!</p>
+        <p><strong>Next Steps:</strong> {"The customer will receive a calendar invite." if appointment_display else "Reach out via their preferred contact method!"}</p>
 
         <hr>
         <p style="font-size: 0.9em; color: #666;">
@@ -785,6 +816,173 @@ def extract_customer_info(text, session, is_user_speech=True):
                         log(f"Captured company name from fragments: {session['company_name']}")
                         del session['company_name_fragments']
 
+# ======================== Google Calendar Functions ========================
+def generate_business_name(business_type: str) -> str:
+    """Generate ACME business name based on type"""
+    if not business_type:
+        return "ACME Business"
+
+    # Clean up business type
+    business_type = business_type.strip().title()
+
+    # Generate ACME name
+    return f"ACME {business_type}"
+
+def get_available_calendar_slots(days_ahead: int = 7, num_slots: int = 3) -> list:
+    """Get available time slots from Google Calendar"""
+    if not GOOGLE_CALENDAR_AVAILABLE:
+        log("[WARN] Google Calendar not available - returning mock slots")
+        # Return mock slots for testing
+        now = datetime.now()
+        return [
+            {
+                "datetime": (now + timedelta(days=2, hours=14-now.hour)).isoformat(),
+                "display": "Tuesday at 2pm"
+            },
+            {
+                "datetime": (now + timedelta(days=3, hours=10-now.hour)).isoformat(),
+                "display": "Wednesday at 10am"
+            }
+        ]
+
+    try:
+        # Load service account credentials
+        if not os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
+            log(f"[WARN] Service account file not found: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
+            return []
+
+        credentials = service_account.Credentials.from_service_account_file(
+            GOOGLE_CALENDAR_SERVICE_ACCOUNT,
+            scopes=['https://www.googleapis.com/auth/calendar']
+        )
+
+        service = build('calendar', 'v3', credentials=credentials)
+
+        # Get events for next N days
+        now = datetime.utcnow()
+        time_min = now.isoformat() + 'Z'
+        time_max = (now + timedelta(days=days_ahead)).isoformat() + 'Z'
+
+        events_result = service.events().list(
+            calendarId=GOOGLE_CALENDAR_EMAIL,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+
+        existing_events = events_result.get('items', [])
+
+        # Generate available slots (9am-5pm, weekdays only)
+        available_slots = []
+        current_date = datetime.now()
+
+        while len(available_slots) < num_slots and current_date < now + timedelta(days=days_ahead):
+            current_date += timedelta(days=1)
+
+            # Skip weekends
+            if current_date.weekday() >= 5:
+                continue
+
+            # Check 2pm and 10am slots
+            for hour, period in [(14, "2pm"), (10, "10am")]:
+                slot_datetime = current_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+                # Check if slot conflicts with existing events
+                slot_iso = slot_datetime.isoformat()
+                conflict = False
+                for event in existing_events:
+                    event_start = event.get('start', {}).get('dateTime', '')
+                    if event_start and slot_iso in event_start:
+                        conflict = True
+                        break
+
+                if not conflict:
+                    day_name = slot_datetime.strftime("%A")
+                    available_slots.append({
+                        "datetime": slot_iso,
+                        "display": f"{day_name} at {period}"
+                    })
+
+                    if len(available_slots) >= num_slots:
+                        break
+
+        return available_slots[:num_slots]
+
+    except Exception as e:
+        log(f"[ERROR] Failed to get calendar slots: {e}")
+        return []
+
+def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_email: str, customer_phone: str, business_type: str) -> bool:
+    """Book an appointment in Google Calendar"""
+    if not GOOGLE_CALENDAR_AVAILABLE:
+        log("[WARN] Google Calendar not available - skipping booking")
+        return False
+
+    try:
+        # Load service account credentials
+        if not os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
+            log(f"[WARN] Service account file not found: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
+            return False
+
+        credentials = service_account.Credentials.from_service_account_file(
+            GOOGLE_CALENDAR_SERVICE_ACCOUNT,
+            scopes=['https://www.googleapis.com/auth/calendar']
+        )
+
+        service = build('calendar', 'v3', credentials=credentials)
+
+        # Parse slot datetime
+        start_time = datetime.fromisoformat(slot_datetime)
+        end_time = start_time + timedelta(hours=1)  # 1-hour appointments
+
+        # Create event
+        event = {
+            'summary': f'Implementation Call - {customer_name}',
+            'description': f"""Bolt AI Group Implementation Call
+
+Customer: {customer_name}
+Business Type: {business_type}
+Email: {customer_email or 'Not provided'}
+Phone: {customer_phone or 'Not provided'}
+
+This is an implementation call for setting up AI phone agent system.""",
+            'start': {
+                'dateTime': start_time.isoformat(),
+                'timeZone': 'America/Los_Angeles',
+            },
+            'end': {
+                'dateTime': end_time.isoformat(),
+                'timeZone': 'America/Los_Angeles',
+            },
+            'attendees': [],
+            'reminders': {
+                'useDefault': False,
+                'overrides': [
+                    {'method': 'email', 'minutes': 24 * 60},  # 1 day before
+                    {'method': 'popup', 'minutes': 30},  # 30 min before
+                ],
+            },
+        }
+
+        # Add customer email as attendee if provided
+        if customer_email and validate_email(customer_email):
+            event['attendees'].append({'email': customer_email})
+
+        # Insert event
+        created_event = service.events().insert(
+            calendarId=GOOGLE_CALENDAR_EMAIL,
+            body=event,
+            sendUpdates='all'  # Send calendar invites to attendees
+        ).execute()
+
+        log(f"[SUCCESS] Calendar appointment booked: {created_event.get('htmlLink')}")
+        return True
+
+    except Exception as e:
+        log(f"[ERROR] Failed to book calendar appointment: {e}")
+        return False
+
 # ======================== Routes ========================
 @app.get("/", response_class=JSONResponse)
 async def index_page():
@@ -823,8 +1021,14 @@ async def handle_incoming_call(request: Request):
         "caller_phone": from_number,
         "customer_name": None,
         "customer_email": None,
+        "customer_phone": None,
         "business_type": None,
-        "company_name": None
+        "company_name": None,
+        "mode": None,  # "demo" or "signup"
+        "demo_business_name": None,  # Generated ACME name
+        "contact_preference": None,  # "call" or "email"
+        "appointment_datetime": None,  # Booked slot
+        "appointment_display": None  # Human-readable slot (e.g., "Tuesday at 2pm")
     }
 
     # Start Media Stream
@@ -928,52 +1132,97 @@ async def handle_media_stream(websocket: WebSocket):
 
                         # Configure OpenAI session based on business
                         if industry == 'sales':
-                            greeting = "Hi I'm Jack with Bolt AI Group. We build AI agents that handle calls, texts, chats, and book appointments for small businesses. Who am I speaking with?"
+                            greeting = "Hi! I'm Jack with Bolt AI Group. We build AI agents that answer calls 24/7 for small businesses. Are you interested in a quick demo, or ready to get set up?"
                             system_message = f"""You are {agent_name}, an enthusiastic AI sales agent for {business_name}.
 
 CRITICAL: Your FIRST response must be EXACTLY this greeting word-for-word:
 "{greeting}"
 
-After the greeting, your goals IN THIS EXACT ORDER:
-1. They tell you their name (first name or full name - accept whatever they provide)
-2. Thank them and ask: "Thanks [Name]! What type of business do you have?"
-3. They tell you their business type (gym, restaurant, salon, etc.)
-4. Give ONE brief sentence about how Bolt AI Group can help that specific business type
-   Examples:
-   - Gym: "We can help your gym handle class bookings and membership inquiries 24/7."
-   - Restaurant: "We can help your restaurant take reservations and answer menu questions around the clock."
-   - Salon: "We can help your salon book appointments and send reminders automatically."
-   Keep it to ONE sentence, then immediately move to next step
-5. Ask: "What's your email address?"
-6. They provide email - repeat it back NORMALLY: "So that's [email] - did I get that right?"
-7. After confirming email is correct, say EXACTLY: "Perfect! We'll be calling you within 24 hours to speak about your specific implementation. Thank you for your time!"
-8. END THE CALL - do NOT ask additional questions after this
+═══════════════════════════════════════════════════════════════
+AFTER GREETING - BRANCH INTO TWO PATHS:
+═══════════════════════════════════════════════════════════════
 
-CRITICAL NAME COLLECTION:
-- When you ask "Who am I speaking with?" they may give first name only (Tony) or full name (Tony Vazquez)
-- Accept whatever they provide - don't ask for clarification
-- Use their name when asking about business type: "Thanks [Name]! What type of business do you have?"
+PATH A: DEMO MODE
+If they say "demo", "show me", "demonstration", "how does it work", or similar:
 
-CRITICAL EMAIL COLLECTION INSTRUCTIONS:
-- After they tell you their email, repeat it back NORMALLY (NOT letter by letter, NOT phonetically)
-- Example: If you hear "tbone7777@hotmail.com", say "So that's tbone7777@hotmail.com - did I get that right?"
-- DO NOT say "t as in tango" or spell it phonetically - just say the email normally
-- If they say NO or correct you ONCE, try ONE more time: "Let me try again - [email]?"
-- If they say NO a SECOND time, say: "I'm having trouble catching the email clearly. We'll give you a call back at this number to confirm everything. Thank you!"
-- After confirming the correct email, IMMEDIATELY wrap up the call as instructed above
-- NEVER attempt more than 2 times for email
+1. Ask: "Perfect! What type of business do you have?"
+2. They tell you business type (HVAC, dental, barbershop, etc.)
+3. Say EXACTLY: "Great! I'm going to roleplay as your [BusinessType] receptionist. I'm going into character now. Ready? I'm going to pause for 2 seconds and then start."
+4. [PAUSE - Wait 2 seconds before responding]
+5. SWITCH INTO DEMO CHARACTER - You are now the receptionist for "ACME [BusinessType]"
+   - Greeting: "Thanks for calling ACME [BusinessType], this is Jack. How can I help you?"
+   - They will roleplay as a customer (e.g., "My AC is broken", "I need a dentist appointment")
+   - Respond with EMPATHY: "I'm sorry to hear that. That's never fun."
+   - Ask: "Does Tuesday at 2pm work, or is this an emergency?"
+
+   IF EMERGENCY:
+   - Say: "Okay, I'll transfer you to a representative now."
+   - IMMEDIATELY BREAK CHARACTER
+   - Say: "I would then transfer them to a representative of your choosing. What did you think? Would you like to get started and setup an implementation call?"
+   - GO TO SIGNUP FLOW
+
+   IF TUESDAY WORKS:
+   - Say: "Perfect! Let me get your phone number for the confirmation."
+   - They give phone number
+   - Say: "Great! You're all set for Tuesday at 2pm. You'll receive a confirmation text shortly. Is there anything else I can help with?"
+   - [Handle 1-2 more exchanges naturally]
+   - BREAK CHARACTER
+   - Say: "Alright, so that's how I'd handle calls for your [BusinessType]! What did you think? Would you like to get started and setup an implementation call?"
+   - GO TO SIGNUP FLOW
+
+═══════════════════════════════════════════════════════════════
+
+PATH B: SIGNUP MODE (Direct or after demo)
+If they say "sign up", "get started", "let's do it", or YES after demo:
+
+1. Say: "Great! First, what's your name?"
+2. They tell you their name
+3. IF they haven't told you business type yet, ask: "Thanks [Name]! What type of business do you have?"
+4. Say: "Perfect! Would you prefer I follow up with a call or send you an email?"
+
+   IF CALL:
+   - Say: "Perfect! What's the best number to reach you?"
+   - Collect phone number ONLY
+
+   IF EMAIL:
+   - Say: "Perfect! What's your email address?"
+   - Collect email address ONLY
+   - Confirm it back: "So that's [email] - did I get that right?"
+   - If NO, try once more. If still NO, say: "I'm having trouble catching it clearly. We'll call you back at this number to confirm."
+
+5. Book implementation appointment:
+   - Say: "Excellent! Let me find an available time for your implementation call. I have [Day1 at Time1] or [Day2 at Time2]. Which works better for you?"
+   - They pick a slot
+   - Say: "Perfect! You're all set for [Day at Time]. You'll receive a confirmation [via call/email based on preference] shortly. Looking forward to speaking with you then!"
+   - END CALL
+
+═══════════════════════════════════════════════════════════════
+
+CRITICAL EMPATHY RULES:
+- When someone mentions a problem (broken AC, toothache, etc.), ALWAYS respond with empathy first
+- Examples: "I'm sorry to hear that. That's never fun." or "Oh no, that sounds frustrating."
+- Then offer help
+
+CRITICAL CHARACTER SWITCHING:
+- When entering demo mode, clearly signal the switch: "I'm going into character now. Ready? I'm going to pause for 2 seconds and then start."
+- When breaking character after demo, clearly signal: "Alright, so that's how I'd handle calls..."
+- In demo mode, you ARE the ACME receptionist - speak as that character
+- Outside demo mode, you are Jack from Bolt AI Group
+
+BUSINESS NAME GENERATION:
+- Auto-generate demo business names as "ACME [BusinessType]"
+- Examples: "ACME HVAC", "ACME Dental", "ACME Barbershop", "ACME Plumbing"
 
 STRICT RULES - DO NOT VIOLATE:
-- ONLY give ONE brief sentence about how you help their business - nothing more
-- DO NOT ask "Can you spend 10 minutes discussing..." - skip this entirely
-- Never mention payment, money, or pricing unless the customer asks first
-- Never make assumptions about what the customer is thinking or feeling
-- Stay focused on collecting: name → business type → brief benefit → email → end call
 - Keep responses brief (1-2 sentences max)
-- Ask one question at a time
-- NEVER move forward without confirming the email is 100% correct
+- Ask ONE question at a time
+- Never mention pricing unless customer asks
+- Demo mode should be SHORT (3-5 exchanges max)
+- Always collect contact preference (call OR email, not both)
+- Always book implementation appointment before ending call
+- Be warm, friendly, and professional
 
-Be conversational, friendly, and efficient. Get the information quickly and end the call."""
+Be conversational, empathetic, and efficient."""
                         else:
                             system_message = f"""You are {agent_name}, a helpful AI receptionist for {business_name}.
 
@@ -1208,10 +1457,14 @@ async def status_callback(request: Request):
     if call_status == "completed" and call_sid in SESSIONS:
         session = SESSIONS[call_sid]
         customer_email = session.get('customer_email')
+        customer_phone = session.get('customer_phone')
         customer_name = session.get('customer_name') or session.get('company_name') or "there"
-        customer_phone = session.get('caller_phone')
+        caller_phone = session.get('caller_phone')
         business_type = session.get('business_type') or "business"
         company_name = session.get('company_name')
+        contact_preference = session.get('contact_preference')
+        appointment_datetime = session.get('appointment_datetime')
+        appointment_display = session.get('appointment_display')
         call_failed = session.get('call_failed', False)
         failure_reason = session.get('failure_reason', '')
 
@@ -1219,18 +1472,45 @@ async def status_callback(request: Request):
         if call_failed:
             log(f"⚠️  CALL FAILED - Technical error occurred during call")
             log(f"Failure reason: {failure_reason}")
-            log(f"Customer phone: {customer_phone}")
+            log(f"Customer phone: {caller_phone}")
             # TODO: Send alert email to business owner about failed call
         else:
             # Normal successful call flow
-            if customer_email:
+
+            # Only send email if they chose email as contact preference
+            if contact_preference == "email" and customer_email:
                 log(f"Sending follow-up email to {customer_email}")
                 send_demo_follow_up(customer_name, customer_email, business_type)
+            elif contact_preference == "call":
+                log(f"Skipping email - customer chose call preference: {customer_phone}")
+
+            # Book calendar appointment if slot was chosen
+            if appointment_datetime and customer_name and business_type:
+                log(f"Booking calendar appointment for {appointment_display}")
+                book_success = book_calendar_appointment(
+                    appointment_datetime,
+                    customer_name,
+                    customer_email,
+                    customer_phone or caller_phone,
+                    business_type
+                )
+                if book_success:
+                    log(f"✓ Calendar appointment booked successfully")
+                else:
+                    log(f"✗ Failed to book calendar appointment")
 
             # Only send notification to business owner if we collected meaningful data
-            if customer_email or (business_type and business_type != "business") or company_name:
+            if customer_email or customer_phone or (business_type and business_type != "business") or company_name:
                 log(f"Sending notification to business owner")
-                send_business_owner_notification(customer_name, customer_email, customer_phone, business_type, company_name)
+                send_business_owner_notification(
+                    customer_name,
+                    customer_email,
+                    customer_phone or caller_phone,
+                    business_type,
+                    company_name,
+                    contact_preference,
+                    appointment_display
+                )
             else:
                 log(f"Skipping business owner notification - no customer data collected")
 

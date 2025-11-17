@@ -23,3 +23,8 @@ resend==0.8.0
 
 # SSL certificates
 certifi==2023.11.17
+
+# Google Calendar API
+google-auth==2.23.0
+google-auth-oauthlib==1.1.0
+google-api-python-client==2.100.0
