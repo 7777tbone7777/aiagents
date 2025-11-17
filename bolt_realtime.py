@@ -1631,8 +1631,10 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
 
 
         # Run both tasks concurrently
+        log(f"[DEBUG] Starting concurrent tasks for call {call_sid}")
         try:
             await asyncio.gather(receive_from_twilio(), send_to_twilio())
+            log(f"[DEBUG] Both tasks completed normally for call {call_sid}")
         except Exception as e:
             log(f"CRITICAL ERROR in media stream handler: {type(e).__name__}: {e}")
             log(f"Call SID: {call_sid}, Stream SID: {stream_sid}")
@@ -1644,8 +1646,10 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                 SESSIONS[call_sid]['call_failed'] = True
                 SESSIONS[call_sid]['failure_reason'] = str(e)
     finally:
+        log(f"[DEBUG] Entering finally block - closing OpenAI WebSocket for call {call_sid}")
         # Always close the OpenAI WebSocket
         await openai_ws.close()
+        log(f"[DEBUG] OpenAI WebSocket closed, handler complete for call {call_sid}")
 
 @app.post("/status")
 async def status_callback(request: Request):
