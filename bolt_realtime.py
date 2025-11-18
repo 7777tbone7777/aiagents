@@ -1093,7 +1093,8 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         log("[CALENDAR] ✓ Google Calendar service built successfully")
 
         # Get events for next N days
-        now = datetime.now()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         time_min = now.isoformat()
         time_max = (now + timedelta(days=days_ahead)).isoformat()
 
@@ -1263,7 +1264,8 @@ def get_next_business_day_slot() -> dict:
         service = build('calendar', 'v3', credentials=credentials)
 
         # Calculate next business day (Monday-Friday)
-        now = datetime.now()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         next_day = now + timedelta(days=1)
         while next_day.weekday() >= 5:  # Skip Saturday (5) and Sunday (6)
             next_day += timedelta(days=1)
