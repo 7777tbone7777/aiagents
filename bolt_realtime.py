@@ -517,7 +517,7 @@ def send_business_owner_notification(customer_name, customer_email, customer_pho
 
     return send_email(owner_email, subject, body_html)
 
-def send_demo_follow_up(customer_name, customer_email, business_type, appointment_datetime=None, calendar_link=None):
+def send_demo_follow_up(customer_name, customer_email, business_type, appointment_datetime=None):
     """Send follow-up email after demo call"""
     subject = f"Great chatting with you, {customer_name}! - {COMPANY_NAME}"
 
@@ -586,24 +586,47 @@ def send_demo_follow_up(customer_name, customer_email, business_type, appointmen
     benefits_html = "\n".join([f"<li>{benefit}</li>" for benefit in benefits])
 
     # Implementation call reminder with calendar link
-    if appointment_datetime and calendar_link:
+    if appointment_datetime:
         from datetime import datetime
+        import urllib.parse
         try:
             appt_dt = datetime.fromisoformat(appointment_datetime)
             formatted_date = appt_dt.strftime('%A, %B %d at %I:%M%p').replace(' 0', ' ')
+
+            # Create Google Calendar add event URL (works for anyone)
+            from datetime import timedelta
+            end_dt = appt_dt + timedelta(hours=1)
+
+            # Format for Google Calendar URL: YYYYMMDDTHHmmSSZ
+            start_str = appt_dt.strftime('%Y%m%dT%H%M%S')
+            end_str = end_dt.strftime('%Y%m%dT%H%M%S')
+
+            title = urllib.parse.quote(f"Implementation Call with {COMPANY_NAME}")
+            details = urllib.parse.quote(f"Implementation call to set up your AI phone agent system.\n\nJoin via: {REPLY_TO_EMAIL}")
+
+            # Google Calendar add event URL
+            add_to_calendar_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={title}&dates={start_str}/{end_str}&details={details}&ctz=America/Los_Angeles"
+
         except:
             formatted_date = appointment_datetime
+            add_to_calendar_url = None
 
-        calendar_button = f"""
-        <p><strong>Your Implementation Call: {formatted_date}</strong></p>
-        <p style="text-align: center; margin: 25px 0;">
-            <a href="{calendar_link}"
-               style="background-color: #0066cc; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                📅 Add to Calendar
-            </a>
-        </p>
-        <p style="color: #666;">I'll walk you through setting up your personalized AI phone agent. If you have any questions before then, feel free to reply to this email.</p>
-        """
+        if add_to_calendar_url:
+            calendar_button = f"""
+            <p><strong>Your Implementation Call: {formatted_date}</strong></p>
+            <p style="text-align: center; margin: 25px 0;">
+                <a href="{add_to_calendar_url}"
+                   style="background-color: #0066cc; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                    📅 Add to Calendar
+                </a>
+            </p>
+            <p style="color: #666;">I'll walk you through setting up your personalized AI phone agent. If you have any questions before then, feel free to reply to this email.</p>
+            """
+        else:
+            calendar_button = f"""
+            <p><strong>Your Implementation Call: {formatted_date}</strong></p>
+            <p style="color: #666;">I'll walk you through setting up your personalized AI phone agent. If you have any questions before then, feel free to reply to this email.</p>
+            """
     else:
         calendar_button = f"""
         <p><strong>Looking forward to our implementation call! I'll walk you through setting up your personalized AI phone agent.</strong></p>
@@ -2142,7 +2165,7 @@ async def status_callback(request: Request):
             # Always send confirmation email if we have customer email
             if customer_email and appointment_datetime:
                 log(f"Sending calendar confirmation email to {customer_email}")
-                send_demo_follow_up(customer_name, customer_email, business_type, appointment_datetime, calendar_link)
+                send_demo_follow_up(customer_name, customer_email, business_type, appointment_datetime)
             elif customer_email and not appointment_datetime:
                 log(f"Sending follow-up email (no appointment booked) to {customer_email}")
                 send_demo_follow_up(customer_name, customer_email, business_type)
