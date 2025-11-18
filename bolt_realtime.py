@@ -991,30 +991,34 @@ def generate_business_name(business_type: str) -> str:
     # Generate ACME name
     return f"ACME {business_type}"
 
-def get_available_calendar_slots(days_ahead: int = 7, num_slots: int = 3) -> list:
-    """Get available time slots from Google Calendar"""
+def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> list:
+    """Get first available appointment slot from Google Calendar
+
+    Operating hours: 9am - 7pm, every day
+    Slots: Every hour on the hour (9am, 10am, 11am, ..., 6pm)
+    Logic: First available = 1 hour from now, or next day at 9am if after hours
+    """
     if not GOOGLE_CALENDAR_AVAILABLE:
         log("[WARN] Google Calendar not available - returning mock slots")
         # Return mock slots for testing
         now = datetime.now()
-        return [
-            {
-                "datetime": (now + timedelta(days=2, hours=14-now.hour)).isoformat(),
-                "display": "Tuesday at 2pm"
-            },
-            {
-                "datetime": (now + timedelta(days=3, hours=10-now.hour)).isoformat(),
-                "display": "Wednesday at 10am"
-            }
-        ]
+        # Calculate 1 hour from now
+        one_hour_later = now + timedelta(hours=1)
+        # Round to next hour
+        next_slot = one_hour_later.replace(minute=0, second=0, microsecond=0)
+        if one_hour_later.minute > 0:
+            next_slot += timedelta(hours=1)
+
+        return [{
+            "datetime": next_slot.isoformat(),
+            "display": f"{next_slot.strftime('%A at %-I%p').lower()}"
+        }]
 
     try:
         # Load service account credentials
-        # Support both file path (local) and JSON string (Railway env var)
         google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
         if google_creds_json:
-            # Load from environment variable (Railway)
             import json
             credentials_info = json.loads(google_creds_json)
             credentials = service_account.Credentials.from_service_account_info(
@@ -1023,7 +1027,6 @@ def get_available_calendar_slots(days_ahead: int = 7, num_slots: int = 3) -> lis
             )
             log("[INFO] Loaded Google Calendar credentials from environment variable")
         elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
-            # Load from file (local development)
             credentials = service_account.Credentials.from_service_account_file(
                 GOOGLE_CALENDAR_SERVICE_ACCOUNT,
                 scopes=['https://www.googleapis.com/auth/calendar']
@@ -1036,9 +1039,9 @@ def get_available_calendar_slots(days_ahead: int = 7, num_slots: int = 3) -> lis
         service = build('calendar', 'v3', credentials=credentials)
 
         # Get events for next N days
-        now = datetime.utcnow()
-        time_min = now.isoformat() + 'Z'
-        time_max = (now + timedelta(days=days_ahead)).isoformat() + 'Z'
+        now = datetime.now()
+        time_min = now.isoformat()
+        time_max = (now + timedelta(days=days_ahead)).isoformat()
 
         events_result = service.events().list(
             calendarId=GOOGLE_CALENDAR_EMAIL,
@@ -1049,45 +1052,82 @@ def get_available_calendar_slots(days_ahead: int = 7, num_slots: int = 3) -> lis
         ).execute()
 
         existing_events = events_result.get('items', [])
+        log(f"[CALENDAR] Found {len(existing_events)} existing events in next {days_ahead} days")
 
-        # Generate available slots (9am-5pm, weekdays only)
-        available_slots = []
-        current_date = datetime.now()
+        # Operating hours: 9am - 7pm (last appointment at 6pm)
+        OPEN_HOUR = 9
+        CLOSE_HOUR = 19  # 7pm
+        LAST_APPOINTMENT_HOUR = 18  # 6pm (1 hour before close)
 
-        while len(available_slots) < num_slots and current_date < now + timedelta(days=days_ahead):
-            current_date += timedelta(days=1)
+        # Calculate first possible slot (1 hour from now)
+        one_hour_later = now + timedelta(hours=1)
+        # Round up to next hour
+        next_slot_time = one_hour_later.replace(minute=0, second=0, microsecond=0)
+        if one_hour_later.minute > 0:
+            next_slot_time += timedelta(hours=1)
 
-            # Skip weekends
-            if current_date.weekday() >= 5:
-                continue
+        # Check if next slot is after hours - if so, start from next day at 9am
+        if next_slot_time.hour >= CLOSE_HOUR or next_slot_time.hour < OPEN_HOUR:
+            # Move to next day at 9am
+            next_slot_time = (next_slot_time + timedelta(days=1)).replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
+            log(f"[CALENDAR] After hours, moving to next day at 9am: {next_slot_time}")
 
-            # Check 2pm and 10am slots
-            for hour, period in [(14, "2pm"), (10, "10am")]:
-                slot_datetime = current_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+        # Search for first available slot
+        max_search_date = now + timedelta(days=days_ahead)
+        current_check = next_slot_time
 
-                # Check if slot conflicts with existing events
-                slot_iso = slot_datetime.isoformat()
+        while current_check < max_search_date:
+            # Check if this hour is within operating hours
+            if current_check.hour >= OPEN_HOUR and current_check.hour <= LAST_APPOINTMENT_HOUR:
+                # Check for conflicts with existing events
+                slot_iso = current_check.isoformat()
                 conflict = False
+
                 for event in existing_events:
                     event_start = event.get('start', {}).get('dateTime', '')
-                    if event_start and slot_iso in event_start:
-                        conflict = True
-                        break
+                    event_end = event.get('end', {}).get('dateTime', '')
+
+                    if event_start and event_end:
+                        # Parse event times
+                        event_start_dt = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                        event_end_dt = datetime.fromisoformat(event_end.replace('Z', '+00:00'))
+
+                        # Check if our slot overlaps with this event
+                        # Our slot is 1 hour long
+                        slot_end = current_check + timedelta(hours=1)
+
+                        if (current_check < event_end_dt and slot_end > event_start_dt):
+                            conflict = True
+                            log(f"[CALENDAR] Conflict at {current_check.strftime('%A %-I%p')} with event: {event.get('summary', 'Untitled')}")
+                            break
 
                 if not conflict:
-                    day_name = slot_datetime.strftime("%A")
-                    available_slots.append({
+                    # Found first available slot!
+                    day_name = current_check.strftime("%A")
+                    time_display = current_check.strftime("%-I%p").lower()
+
+                    log(f"[CALENDAR] First available slot: {day_name} at {time_display}")
+
+                    return [{
                         "datetime": slot_iso,
-                        "display": f"{day_name} at {period}"
-                    })
+                        "display": f"{day_name} at {time_display}"
+                    }]
 
-                    if len(available_slots) >= num_slots:
-                        break
+            # Move to next hour
+            current_check += timedelta(hours=1)
 
-        return available_slots[:num_slots]
+            # If we've gone past last appointment hour, jump to next day at 9am
+            if current_check.hour > LAST_APPOINTMENT_HOUR or current_check.hour < OPEN_HOUR:
+                current_check = (current_check + timedelta(days=1)).replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
+
+        # No slots found
+        log(f"[CALENDAR] No available slots found in next {days_ahead} days")
+        return []
 
     except Exception as e:
         log(f"[ERROR] Failed to get calendar slots: {e}")
+        import traceback
+        log(f"[ERROR] Traceback: {traceback.format_exc()}")
         return []
 
 def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_email: str, customer_phone: str, business_type: str) -> bool:
@@ -1455,13 +1495,13 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                     {
                                         "type": "function",
                                         "name": "get_available_slots",
-                                        "description": "Get available appointment time slots from the calendar. Call this when the user is ready to book an implementation appointment.",
+                                        "description": "Get the first available appointment slot from the calendar. Returns the next available time starting 1 hour from now during business hours (9am-7pm daily). Call this when the user agrees to book their implementation appointment.",
                                         "parameters": {
                                             "type": "object",
                                             "properties": {
                                                 "days_ahead": {
                                                     "type": "number",
-                                                    "description": "Number of days to look ahead for available slots (default 7)"
+                                                    "description": "Number of days to search ahead for available slots (default 14)"
                                                 }
                                             },
                                             "required": []
@@ -1626,10 +1666,20 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                         session = SESSIONS.get(call_sid)
 
                         if function_name == "get_available_slots":
-                            days_ahead = arguments.get('days_ahead', 7)
-                            slots = get_available_calendar_slots(days_ahead=days_ahead, num_slots=3)
-                            function_result = {"slots": slots}
-                            log(f"[FUNCTION RESULT] get_available_slots returned {len(slots)} slots")
+                            days_ahead = arguments.get('days_ahead', 14)
+                            slots = get_available_calendar_slots(days_ahead=days_ahead, num_slots=1)
+                            if slots:
+                                function_result = {
+                                    "first_available": slots[0],
+                                    "message": f"First available appointment is {slots[0]['display']}"
+                                }
+                                log(f"[FUNCTION RESULT] First available slot: {slots[0]['display']}")
+                            else:
+                                function_result = {
+                                    "first_available": None,
+                                    "message": "No available appointments found in the next 14 days"
+                                }
+                                log(f"[FUNCTION RESULT] No available slots found")
 
                         elif function_name == "book_appointment":
                             slot_datetime = arguments.get('slot_datetime')
