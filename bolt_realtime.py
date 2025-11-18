@@ -604,20 +604,36 @@ def send_demo_follow_up(customer_name, customer_email, business_type, appointmen
             title = urllib.parse.quote(f"Implementation Call with {COMPANY_NAME}")
             details = urllib.parse.quote(f"Implementation call to set up your AI phone agent system.\n\nJoin via: {REPLY_TO_EMAIL}")
 
-            # Google Calendar add event URL
-            add_to_calendar_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={title}&dates={start_str}/{end_str}&details={details}&ctz=America/Los_Angeles"
+            # Create calendar URLs for different providers
+            google_cal_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={title}&dates={start_str}/{end_str}&details={details}&ctz=America/Los_Angeles"
+
+            # Outlook.com calendar URL
+            outlook_cal_url = f"https://outlook.live.com/calendar/0/deeplink/compose?subject={title}&startdt={appt_dt.isoformat()}&enddt={end_dt.isoformat()}&body={details}"
+
+            # Office 365 calendar URL
+            office365_cal_url = f"https://outlook.office.com/calendar/0/deeplink/compose?subject={title}&startdt={appt_dt.isoformat()}&enddt={end_dt.isoformat()}&body={details}"
 
         except:
             formatted_date = appointment_datetime
-            add_to_calendar_url = None
+            google_cal_url = None
+            outlook_cal_url = None
+            office365_cal_url = None
 
-        if add_to_calendar_url:
+        if google_cal_url:
             calendar_button = f"""
             <p><strong>Your Implementation Call: {formatted_date}</strong></p>
             <p style="text-align: center; margin: 25px 0;">
-                <a href="{add_to_calendar_url}"
-                   style="background-color: #0066cc; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                    📅 Add to Calendar
+                <a href="{google_cal_url}"
+                   style="background-color: #0066cc; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 5px;">
+                    📅 Google Calendar
+                </a>
+                <a href="{outlook_cal_url}"
+                   style="background-color: #0072C6; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 5px;">
+                    📅 Outlook
+                </a>
+                <a href="{office365_cal_url}"
+                   style="background-color: #D83B01; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 5px;">
+                    📅 Office 365
                 </a>
             </p>
             <p style="color: #666;">I'll walk you through setting up your personalized AI phone agent. If you have any questions before then, feel free to reply to this email.</p>
@@ -928,7 +944,7 @@ def extract_customer_info(text, session, is_user_speech=True):
             if match:
                 customer_name = match.group(1).strip().title()  # Capitalize properly
                 # Filter out common words that aren't names
-                excluded = ['Sure', 'Yes', 'Yeah', 'Okay', 'Great', 'Perfect', 'Hello', 'Hi', 'Hey', 'Thanks', 'Thank', 'Ready', 'Ready To']
+                excluded = ['Sure', 'Yes', 'Yeah', 'Yep', 'Okay', 'Great', 'Perfect', 'Hello', 'Hi', 'Hey', 'Thanks', 'Thank', 'Ready', 'Ready To', 'Absolutely', 'Definitely']
                 if customer_name not in excluded and len(customer_name) >= 2:
                     session['customer_name'] = customer_name
                     log(f"Captured customer name: {customer_name}")
