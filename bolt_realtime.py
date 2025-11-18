@@ -251,7 +251,7 @@ def send_email(to_email, subject, body_html, max_retries=3):
                 resend.api_key = RESEND_API_KEY
 
                 params = {
-                    "from": f"{COMPANY_NAME} <{FROM_EMAIL}>",
+                    "from": f"{AGENT_NAME} <{FROM_EMAIL}>",
                     "to": [to_email],
                     "subject": subject,
                     "html": body_html,
@@ -277,7 +277,7 @@ def send_email(to_email, subject, body_html, max_retries=3):
 
             msg = MIMEMultipart('alternative')
             msg['Subject'] = subject
-            msg['From'] = f"{COMPANY_NAME} <{SMTP_USER}>"  # Use SMTP user email for FROM
+            msg['From'] = f"{AGENT_NAME} <{SMTP_USER}>"  # Use SMTP user email for FROM
             msg['Reply-To'] = REPLY_TO_EMAIL
             msg['To'] = to_email
 
@@ -517,7 +517,7 @@ def send_business_owner_notification(customer_name, customer_email, customer_pho
 
     return send_email(owner_email, subject, body_html)
 
-def send_demo_follow_up(customer_name, customer_email, business_type):
+def send_demo_follow_up(customer_name, customer_email, business_type, appointment_datetime=None, calendar_link=None):
     """Send follow-up email after demo call"""
     subject = f"Great chatting with you, {customer_name}! - {COMPANY_NAME}"
 
@@ -585,8 +585,27 @@ def send_demo_follow_up(customer_name, customer_email, business_type):
     benefits = business_benefits.get(business_type.lower().strip(), default_benefits)
     benefits_html = "\n".join([f"<li>{benefit}</li>" for benefit in benefits])
 
-    # Implementation call reminder
-    calendar_button = f"""
+    # Implementation call reminder with calendar link
+    if appointment_datetime and calendar_link:
+        from datetime import datetime
+        try:
+            appt_dt = datetime.fromisoformat(appointment_datetime)
+            formatted_date = appt_dt.strftime('%A, %B %d at %I:%M%p').replace(' 0', ' ')
+        except:
+            formatted_date = appointment_datetime
+
+        calendar_button = f"""
+        <p><strong>Your Implementation Call: {formatted_date}</strong></p>
+        <p style="text-align: center; margin: 25px 0;">
+            <a href="{calendar_link}"
+               style="background-color: #0066cc; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                📅 Add to Calendar
+            </a>
+        </p>
+        <p style="color: #666;">I'll walk you through setting up your personalized AI phone agent. If you have any questions before then, feel free to reply to this email.</p>
+        """
+    else:
+        calendar_button = f"""
         <p><strong>Looking forward to our implementation call! I'll walk you through setting up your personalized AI phone agent.</strong></p>
         <p style="color: #666;">If you have any questions before then, feel free to reply to this email.</p>
         """
@@ -614,13 +633,6 @@ def send_demo_follow_up(customer_name, customer_email, business_type):
             <li><strong>Call Analytics</strong> - See transcripts and insights from every call</li>
             <li><strong>Simple Setup</strong> - We handle everything, you just forward your number</li>
         </ul>
-
-        <h3 style="color: #0066cc; border-bottom: 2px solid #0066cc; padding-bottom: 5px;">
-            Pricing:
-        </h3>
-        <p style="font-size: 1.1em;">
-            <strong>{MONTHLY_PRICE}/month</strong> - All-inclusive, no hidden fees
-        </p>
 
         {calendar_button}
 
@@ -1449,13 +1461,13 @@ This is an implementation call for setting up AI phone agent system.""",
         log(f"[BOOKING] ✓ SUCCESS! Calendar appointment booked")
         log(f"[BOOKING] Event ID: {event_id}")
         log(f"[BOOKING] Event Link: {event_link}")
-        return True
+        return {'success': True, 'link': event_link}
 
     except Exception as e:
         log(f"[BOOKING] ✗ ERROR Failed to book calendar appointment: {e}")
         import traceback
         log(f"[BOOKING] Traceback: {traceback.format_exc()}")
-        return False
+        return {'success': False, 'link': None}
 
 # ======================== Routes ========================
 @app.get("/", response_class=JSONResponse)
@@ -2106,24 +2118,26 @@ async def status_callback(request: Request):
             # Normal successful call flow
 
             # Book calendar appointment if slot was chosen
+            calendar_link = None
             if appointment_datetime and customer_name and business_type:
                 log(f"Booking calendar appointment for {appointment_display}")
-                book_success = book_calendar_appointment(
+                booking_result = book_calendar_appointment(
                     appointment_datetime,
                     customer_name,
                     customer_email,
                     customer_phone or caller_phone,
                     business_type
                 )
-                if book_success:
+                if booking_result['success']:
                     log(f"✓ Calendar appointment booked successfully")
+                    calendar_link = booking_result['link']
                 else:
                     log(f"✗ Failed to book calendar appointment")
 
             # Always send confirmation email if we have customer email
             if customer_email and appointment_datetime:
                 log(f"Sending calendar confirmation email to {customer_email}")
-                send_demo_follow_up(customer_name, customer_email, business_type)
+                send_demo_follow_up(customer_name, customer_email, business_type, appointment_datetime, calendar_link)
             elif customer_email and not appointment_datetime:
                 log(f"Sending follow-up email (no appointment booked) to {customer_email}")
                 send_demo_follow_up(customer_name, customer_email, business_type)
