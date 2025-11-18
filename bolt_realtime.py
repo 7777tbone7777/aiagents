@@ -1021,8 +1021,21 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         log("[CALENDAR] Attempting to load Google Calendar credentials...")
         # Load service account credentials
         google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+        google_creds_base64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64")
 
-        if google_creds_json:
+        if google_creds_base64:
+            import json
+            import base64
+            log("[CALENDAR] Found GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 env var")
+            # Decode from base64
+            decoded = base64.b64decode(google_creds_base64).decode('utf-8')
+            credentials_info = json.loads(decoded)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[CALENDAR] ✓ Loaded Google Calendar credentials from base64 environment variable")
+        elif google_creds_json:
             import json
             log("[CALENDAR] Found GOOGLE_SERVICE_ACCOUNT_JSON env var")
             credentials_info = json.loads(google_creds_json)
@@ -1040,6 +1053,7 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
             log("[CALENDAR] ✓ Loaded Google Calendar credentials from file")
         else:
             log(f"[CALENDAR] ✗ No Google Calendar credentials found!")
+            log(f"[CALENDAR] Checked env var: GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 = {bool(google_creds_base64)}")
             log(f"[CALENDAR] Checked env var: GOOGLE_SERVICE_ACCOUNT_JSON = {bool(google_creds_json)}")
             log(f"[CALENDAR] Checked file: {GOOGLE_CALENDAR_SERVICE_ACCOUNT} exists = False")
             return []
@@ -1181,8 +1195,19 @@ def get_next_business_day_slot() -> dict:
     try:
         # Load service account credentials
         google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+        google_creds_base64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64")
 
-        if google_creds_json:
+        if google_creds_base64:
+            import json
+            import base64
+            decoded = base64.b64decode(google_creds_base64).decode('utf-8')
+            credentials_info = json.loads(decoded)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[INFO] Loaded Google Calendar credentials from base64 for next business day slot")
+        elif google_creds_json:
             import json
             credentials_info = json.loads(google_creds_json)
             credentials = service_account.Credentials.from_service_account_info(
@@ -1288,8 +1313,21 @@ def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_e
         # Load service account credentials
         # Support both file path (local) and JSON string (Railway env var)
         google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+        google_creds_base64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64")
 
-        if google_creds_json:
+        if google_creds_base64:
+            # Load from base64 environment variable (Railway - recommended)
+            import json
+            import base64
+            log("[BOOKING] Loading credentials from base64 environment variable...")
+            decoded = base64.b64decode(google_creds_base64).decode('utf-8')
+            credentials_info = json.loads(decoded)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[BOOKING] ✓ Credentials loaded from base64 env var")
+        elif google_creds_json:
             # Load from environment variable (Railway)
             import json
             log("[BOOKING] Loading credentials from environment variable...")

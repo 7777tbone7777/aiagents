@@ -24,6 +24,11 @@ keys/
 *.key
 service-account*.json
 sa-*.json
+google-creds*.json
+google-creds*.txt
+.env.backup*
+.env-old
+*.py.backup*
 
 # IDE
 .vscode/
