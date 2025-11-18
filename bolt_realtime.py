@@ -944,7 +944,7 @@ def extract_customer_info(text, session, is_user_speech=True):
             if match:
                 customer_name = match.group(1).strip().title()  # Capitalize properly
                 # Filter out common words that aren't names
-                excluded = ['Sure', 'Yes', 'Yeah', 'Yep', 'Okay', 'Great', 'Perfect', 'Hello', 'Hi', 'Hey', 'Thanks', 'Thank', 'Ready', 'Ready To', 'Absolutely', 'Definitely']
+                excluded = ['Sure', 'Yes', 'Yeah', 'Okay', 'Great', 'Perfect', 'Hello', 'Hi', 'Hey', 'Thanks', 'Thank', 'Ready', 'Ready To', 'Absolutely', 'Definitely', 'Yep', 'Yup', 'Nope', 'Nah']
                 if customer_name not in excluded and len(customer_name) >= 2:
                     session['customer_name'] = customer_name
                     log(f"Captured customer name: {customer_name}")
