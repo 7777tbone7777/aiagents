@@ -1423,7 +1423,6 @@ This is an implementation call for setting up AI phone agent system.""",
                 'dateTime': end_time.isoformat(),
                 'timeZone': 'America/Los_Angeles',
             },
-            'attendees': [],
             'reminders': {
                 'useDefault': False,
                 'overrides': [
@@ -1433,12 +1432,9 @@ This is an implementation call for setting up AI phone agent system.""",
             },
         }
 
-        # Add customer email as attendee if provided
-        if customer_email and validate_email(customer_email):
-            event['attendees'].append({'email': customer_email})
-            log(f"[BOOKING] Adding attendee: {customer_email}")
-        else:
-            log(f"[BOOKING] No valid email - calendar invite will not be sent to customer")
+        # Note: Not adding attendees because service accounts can't invite without Domain-Wide Delegation
+        # Calendar invite will be sent via separate email with send_demo_follow_up()
+        log(f"[BOOKING] Event will be created without attendees (invite sent separately via email)")
 
         # Insert event
         log(f"[BOOKING] Creating event in calendar: {GOOGLE_CALENDAR_EMAIL}")
