@@ -748,13 +748,13 @@ def extract_customer_info(text, session, is_user_speech=True):
             old_email = session.get('customer_email')
             session['customer_email'] = normalized_email
             if old_email and old_email != normalized_email:
-                log(f"Updated email: {old_email} -> {normalized_email}")
+                log(f"✓ EMAIL UPDATED: {old_email} -> {normalized_email}")
             elif raw_email != normalized_email:
-                log(f"Captured email: {raw_email} -> normalized to: {normalized_email}")
+                log(f"✓ EMAIL CAPTURED: {raw_email} -> normalized to: {normalized_email}")
             else:
-                log(f"Captured email: {normalized_email}")
+                log(f"✓ EMAIL CAPTURED: {normalized_email}")
         else:
-            log(f"Invalid email format rejected: {normalized_email}")
+            log(f"✗ EMAIL REJECTED (invalid format): {normalized_email}")
 
     # Extract spoken email patterns (e.g., "john at gmail dot com", "jane at company dot co dot uk")
     # Support common TLDs: .com, .net, .org, .io, .co, .ai, .us, .uk, .ca
@@ -1685,8 +1685,11 @@ If they say "sign up", "get started", "let's do it", or YES after demo:
    - If customer wants a different time, call get_available_slots again and offer alternatives
 5. Collect email for calendar invitation:
    - Say: "Perfect! What's your email address so I can send you the calendar invitation?"
-   - Confirm it back: "So that's [email] - did I get that right?"
-   - If NO, try once more. If still NO, say: "No problem, I'll send the confirmation to this phone number."
+   - Listen carefully to the ENTIRE email address - don't interrupt
+   - Confirm it back SLOWLY and CLEARLY: "So that's [spell out email character by character if complex] - did I get that right?"
+   - If NO or they correct you: "My apologies! What's the correct email?" and listen again carefully
+   - Allow up to 3 attempts to get the email right
+   - If still can't get it after 3 tries, say: "No problem, I'll have our team reach out to you at this phone number to send the calendar invitation."
 6. Confirm booking:
    - Call book_appointment function with chosen slot
    - Say: "Great! You're all set for [Day at Time]. I'm sending you a calendar invitation now so you can add it right to your calendar. Looking forward to speaking with you then!"
