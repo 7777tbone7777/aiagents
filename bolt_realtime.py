@@ -1644,7 +1644,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                 "model": MODEL,  # REQUIRED: Specify the Realtime API model
                                 "turn_detection": {
                                     "type": "server_vad",
-                                    "threshold": 0.8,  # Higher threshold = less sensitive, fewer false interruptions (default 0.5)
+                                    "threshold": 0.7,  # Balanced: not too sensitive (0.8 missed speech), not too low (0.6 false interrupts) (default 0.5)
                                     "prefix_padding_ms": 300,  # Audio before speech (default 300ms)
                                     "silence_duration_ms": 1200  # Longer silence before turn ends
                                 },
