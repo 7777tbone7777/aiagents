@@ -1445,7 +1445,7 @@ This is an implementation call for setting up AI phone agent system.""",
         created_event = service.events().insert(
             calendarId=GOOGLE_CALENDAR_EMAIL,
             body=event,
-            sendUpdates='all'  # Send calendar invites to attendees
+            sendUpdates='none'  # Don't send via Google (we handle email separately)
         ).execute()
 
         event_link = created_event.get('htmlLink', 'N/A')
