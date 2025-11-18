@@ -1791,17 +1791,8 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             log(f"Assistant: {transcript}")
                             log(f"[AUDIO] Transcript complete. Audio chunks sent so far: {getattr(send_to_twilio, 'audio_chunk_count', 0)}")
 
-                            # CRITICAL FIX: Always wait for audio buffer to flush to Twilio
-                            # Audio chunks are sent rapidly but Twilio needs time to play them
-                            log(f"[AUDIO] Waiting 0.5 seconds for audio buffer to flush to caller...")
-                            await asyncio.sleep(0.5)
-                            log(f"[AUDIO] Buffer flush complete, ready for next interaction")
-
-                            # Check if this is the final closing message
-                            if "thank you for your time" in transcript.lower() or "we'll be calling you" in transcript.lower():
-                                log("Final message detected - allowing additional time for audio to finish playing...")
-                                # Give audio buffer extra time to fully play before call ends
-                                await asyncio.sleep(2)
+                            # DO NOT add delay here - it interrupts audio playback
+                            # The audio chunks are still streaming when transcript completes
 
                             # DO NOT extract from assistant responses to avoid capturing AI's mistakes
                             # Only extract from user speech
