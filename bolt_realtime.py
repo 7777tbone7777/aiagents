@@ -1047,13 +1047,21 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
             # Parse JSON
             credentials_info = json.loads(google_creds_json)
 
-            # Fix private key newlines if they got corrupted
+            # Debug private key format
             if 'private_key' in credentials_info:
                 pk = credentials_info['private_key']
-                # If newlines are literal \n instead of actual newlines, fix them
-                if '\\n' in pk and '\n' not in pk:
-                    log("[CALENDAR] Fixing escaped newlines in private key")
-                    credentials_info['private_key'] = pk.replace('\\n', '\n')
+                log(f"[CALENDAR] Private key length: {len(pk)} chars")
+                log(f"[CALENDAR] Private key starts with: {pk[:50]}")
+                log(f"[CALENDAR] Has actual newlines: {chr(10) in pk}")
+                log(f"[CALENDAR] Has backslash-n: {'\\n' in pk}")
+
+                # Count lines - should be ~28 lines for a proper RSA key
+                lines = pk.split('\n')
+                log(f"[CALENDAR] Private key has {len(lines)} lines")
+
+                # If it's all on one line, the newlines are wrong
+                if len(lines) == 1:
+                    log("[CALENDAR] ERROR: Private key is all on one line - newlines are broken")
 
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
