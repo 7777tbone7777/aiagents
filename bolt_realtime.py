@@ -1011,10 +1011,10 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         if one_hour_later.minute > 0:
             next_slot += timedelta(hours=1)
 
-        log(f"[CALENDAR] Mock slot: {next_slot.strftime('%A at %-I%p')}")
+        log(f"[CALENDAR] Mock slot: {next_slot.strftime('%A at %I%p').replace(' 0', ' ')}")
         return [{
             "datetime": next_slot.isoformat(),
-            "display": f"{next_slot.strftime('%A at %-I%p').lower()}"
+            "display": f"{next_slot.strftime('%A at %I%p').lower().replace(' 0', ' ')}"
         }]
 
     try:
@@ -1125,13 +1125,13 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
 
                         if (current_check < event_end_dt and slot_end > event_start_dt):
                             conflict = True
-                            log(f"[CALENDAR] Conflict at {current_check.strftime('%A %-I%p')} with event: {event.get('summary', 'Untitled')}")
+                            log(f"[CALENDAR] Conflict at {current_check.strftime('%A %I%p').replace(' 0', ' ')} with event: {event.get('summary', 'Untitled')}")
                             break
 
                 if not conflict:
                     # Found first available slot!
                     day_name = current_check.strftime("%A")
-                    time_display = current_check.strftime("%-I%p").lower()
+                    time_display = current_check.strftime("%I%p").lower().replace('0', '', 1) if current_check.strftime("%I%p").startswith('0') else current_check.strftime("%I%p").lower()
 
                     log(f"[CALENDAR] ✓ FOUND available slot after checking {slots_checked} slots: {day_name} at {time_display}")
 
@@ -1175,7 +1175,7 @@ def get_next_business_day_slot() -> dict:
 
         return {
             "datetime": next_slot.isoformat(),
-            "display": f"{next_slot.strftime('%A at %-I%p').lower()}"
+            "display": f"{next_slot.strftime('%A at %I%p').lower().replace(' 0', ' ')}"
         }
 
     try:
@@ -1254,7 +1254,7 @@ def get_next_business_day_slot() -> dict:
             if not conflict:
                 # Found available slot!
                 day_name = check_time.strftime("%A")
-                time_display = check_time.strftime("%-I%p").lower()
+                time_display = check_time.strftime("%I%p").lower().replace('0', '', 1) if check_time.strftime("%I%p").startswith('0') else check_time.strftime("%I%p").lower()
 
                 log(f"[NEXT_DAY_SLOT] First available morning slot: {day_name} at {time_display}")
 
@@ -1319,7 +1319,7 @@ def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_e
         start_time = datetime.fromisoformat(slot_datetime)
         end_time = start_time + timedelta(hours=1)  # 1-hour appointments
 
-        log(f"[BOOKING] Event time: {start_time.strftime('%A, %B %d at %-I:%M%p')} - {end_time.strftime('%-I:%M%p')}")
+        log(f"[BOOKING] Event time: {start_time.strftime('%A, %B %d at %I:%M%p').replace(' 0', ' ')} - {end_time.strftime('%I:%M%p').replace(' 0', ' ')}")
 
         # Create event
         event = {
