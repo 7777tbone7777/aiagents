@@ -905,11 +905,13 @@ def extract_customer_info(text, session, is_user_speech=True):
             if match:
                 customer_name = match.group(1).strip().title()  # Capitalize properly
                 # Filter out common words that aren't names
-                excluded = ['Sure', 'Yes', 'Yeah', 'Okay', 'Great', 'Perfect', 'Hello', 'Hi', 'Hey', 'Thanks', 'Thank']
+                excluded = ['Sure', 'Yes', 'Yeah', 'Okay', 'Great', 'Perfect', 'Hello', 'Hi', 'Hey', 'Thanks', 'Thank', 'Ready', 'Ready To']
                 if customer_name not in excluded and len(customer_name) >= 2:
                     session['customer_name'] = customer_name
                     log(f"Captured customer name: {customer_name}")
                     break
+                else:
+                    log(f"Rejected name candidate: '{customer_name}' (in exclusion list or too short)")
 
     # Extract company name from patterns like:
     # "calling from Yoda Yoga"
@@ -1442,6 +1444,8 @@ This is an implementation call for setting up AI phone agent system.""",
                     {'method': 'popup', 'minutes': 30},  # 30 min before
                 ],
             },
+            'visibility': 'public',  # Make event publicly viewable via link
+            'guestsCanSeeOtherGuests': False,
         }
 
         # Note: Not adding attendees because service accounts can't invite without Domain-Wide Delegation
