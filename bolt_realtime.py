@@ -1793,8 +1793,8 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
 
                             # CRITICAL FIX: Always wait for audio buffer to flush to Twilio
                             # Audio chunks are sent rapidly but Twilio needs time to play them
-                            log(f"[AUDIO] Waiting 2 seconds for audio buffer to flush to caller...")
-                            await asyncio.sleep(2)
+                            log(f"[AUDIO] Waiting 0.5 seconds for audio buffer to flush to caller...")
+                            await asyncio.sleep(0.5)
                             log(f"[AUDIO] Buffer flush complete, ready for next interaction")
 
                             # Check if this is the final closing message
