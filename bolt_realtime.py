@@ -1063,11 +1063,17 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
                 if len(lines) == 1:
                     log("[CALENDAR] ERROR: Private key is all on one line - newlines are broken")
 
-            credentials = service_account.Credentials.from_service_account_info(
-                credentials_info,
-                scopes=['https://www.googleapis.com/auth/calendar']
-            )
-            log("[CALENDAR] ✓ Loaded Google Calendar credentials from environment variable")
+            try:
+                credentials = service_account.Credentials.from_service_account_info(
+                    credentials_info,
+                    scopes=['https://www.googleapis.com/auth/calendar']
+                )
+                log("[CALENDAR] ✓ Loaded Google Calendar credentials from environment variable")
+            except Exception as e:
+                log(f"[CALENDAR] ✗ Failed to create credentials: {type(e).__name__}: {str(e)}")
+                import traceback
+                log(f"[CALENDAR] Full traceback: {traceback.format_exc()}")
+                raise
         elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
             log(f"[CALENDAR] Found credentials file at: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
             credentials = service_account.Credentials.from_service_account_file(
