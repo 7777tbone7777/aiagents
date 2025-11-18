@@ -1428,10 +1428,13 @@ If they say "sign up", "get started", "let's do it", or YES after demo:
    - If NO, try once more. If still NO, say: "I'm having trouble catching it clearly. We'll call you back at this number to confirm."
 
 5. Book implementation appointment:
-   - Say: "Excellent! Let me find an available time for your implementation call. I have [Day1 at Time1] or [Day2 at Time2]. Which works better for you?"
-   - They pick a slot
+   - Say: "Excellent! Let me find the first available time for your implementation call."
+   - Call get_available_slots function to retrieve the next available appointment
+   - Say: "I have [Day at Time] available. Does that work for you?"
+   - If they say YES: Call book_appointment function with that slot
    - Say: "Perfect! You're all set for [Day at Time]. You'll receive a confirmation [via call/email based on preference] shortly. Looking forward to speaking with you then!"
-   - END CALL
+   - If they say NO: Say "No problem! Let me check what else we have available." Call get_available_slots again and offer the next slot
+   - END CALL after booking
 
 ═══════════════════════════════════════════════════════════════
 
