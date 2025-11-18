@@ -1027,6 +1027,10 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
             import json
             import base64
             log("[CALENDAR] Found GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 env var")
+            log(f"[CALENDAR] Base64 length: {len(google_creds_base64)} chars")
+            # Clean base64 - remove any whitespace
+            google_creds_base64 = google_creds_base64.strip().replace('\n', '').replace('\r', '').replace(' ', '')
+            log(f"[CALENDAR] Cleaned base64 length: {len(google_creds_base64)} chars")
             # Decode from base64
             decoded = base64.b64decode(google_creds_base64).decode('utf-8')
             credentials_info = json.loads(decoded)
