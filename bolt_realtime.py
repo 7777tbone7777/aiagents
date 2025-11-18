@@ -1092,14 +1092,15 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         service = build('calendar', 'v3', credentials=credentials)
         log("[CALENDAR] ✓ Google Calendar service built successfully")
 
-        # Get events for next N days
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
+        # Get events for next N days - use Pacific time
+        import pytz
+        pacific = pytz.timezone('America/Los_Angeles')
+        now = datetime.now(pacific)
         time_min = now.isoformat()
         time_max = (now + timedelta(days=days_ahead)).isoformat()
 
         log(f"[CALENDAR] Fetching events from {GOOGLE_CALENDAR_EMAIL}")
-        log(f"[CALENDAR] Time range: {now.strftime('%Y-%m-%d %H:%M')} to {(now + timedelta(days=days_ahead)).strftime('%Y-%m-%d %H:%M')}")
+        log(f"[CALENDAR] Time range (Pacific): {now.strftime('%Y-%m-%d %H:%M %Z')} to {(now + timedelta(days=days_ahead)).strftime('%Y-%m-%d %H:%M %Z')}")
 
         events_result = service.events().list(
             calendarId=GOOGLE_CALENDAR_EMAIL,
@@ -1264,8 +1265,9 @@ def get_next_business_day_slot() -> dict:
         service = build('calendar', 'v3', credentials=credentials)
 
         # Calculate next business day (Monday-Friday)
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
+        import pytz
+        pacific = pytz.timezone('America/Los_Angeles')
+        now = datetime.now(pacific)
         next_day = now + timedelta(days=1)
         while next_day.weekday() >= 5:  # Skip Saturday (5) and Sunday (6)
             next_day += timedelta(days=1)
