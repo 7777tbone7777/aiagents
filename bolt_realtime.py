@@ -998,6 +998,8 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
     Slots: Every hour on the hour (9am, 10am, 11am, ..., 6pm)
     Logic: First available = 1 hour from now, or next day at 9am if after hours
     """
+    log(f"[CALENDAR] get_available_slots called - searching {days_ahead} days ahead")
+
     if not GOOGLE_CALENDAR_AVAILABLE:
         log("[WARN] Google Calendar not available - returning mock slots")
         # Return mock slots for testing
@@ -1009,39 +1011,50 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         if one_hour_later.minute > 0:
             next_slot += timedelta(hours=1)
 
+        log(f"[CALENDAR] Mock slot: {next_slot.strftime('%A at %-I%p')}")
         return [{
             "datetime": next_slot.isoformat(),
             "display": f"{next_slot.strftime('%A at %-I%p').lower()}"
         }]
 
     try:
+        log("[CALENDAR] Attempting to load Google Calendar credentials...")
         # Load service account credentials
         google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
         if google_creds_json:
             import json
+            log("[CALENDAR] Found GOOGLE_SERVICE_ACCOUNT_JSON env var")
             credentials_info = json.loads(google_creds_json)
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=['https://www.googleapis.com/auth/calendar']
             )
-            log("[INFO] Loaded Google Calendar credentials from environment variable")
+            log("[CALENDAR] ✓ Loaded Google Calendar credentials from environment variable")
         elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
+            log(f"[CALENDAR] Found credentials file at: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
             credentials = service_account.Credentials.from_service_account_file(
                 GOOGLE_CALENDAR_SERVICE_ACCOUNT,
                 scopes=['https://www.googleapis.com/auth/calendar']
             )
-            log("[INFO] Loaded Google Calendar credentials from file")
+            log("[CALENDAR] ✓ Loaded Google Calendar credentials from file")
         else:
-            log(f"[WARN] No Google Calendar credentials found")
+            log(f"[CALENDAR] ✗ No Google Calendar credentials found!")
+            log(f"[CALENDAR] Checked env var: GOOGLE_SERVICE_ACCOUNT_JSON = {bool(google_creds_json)}")
+            log(f"[CALENDAR] Checked file: {GOOGLE_CALENDAR_SERVICE_ACCOUNT} exists = False")
             return []
 
+        log("[CALENDAR] Building Google Calendar service...")
         service = build('calendar', 'v3', credentials=credentials)
+        log("[CALENDAR] ✓ Google Calendar service built successfully")
 
         # Get events for next N days
         now = datetime.now()
         time_min = now.isoformat()
         time_max = (now + timedelta(days=days_ahead)).isoformat()
+
+        log(f"[CALENDAR] Fetching events from {GOOGLE_CALENDAR_EMAIL}")
+        log(f"[CALENDAR] Time range: {now.strftime('%Y-%m-%d %H:%M')} to {(now + timedelta(days=days_ahead)).strftime('%Y-%m-%d %H:%M')}")
 
         events_result = service.events().list(
             calendarId=GOOGLE_CALENDAR_EMAIL,
@@ -1052,7 +1065,14 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         ).execute()
 
         existing_events = events_result.get('items', [])
-        log(f"[CALENDAR] Found {len(existing_events)} existing events in next {days_ahead} days")
+        log(f"[CALENDAR] ✓ Found {len(existing_events)} existing events in next {days_ahead} days")
+
+        # Log first few events for debugging
+        if existing_events:
+            for i, event in enumerate(existing_events[:3]):
+                event_start = event.get('start', {}).get('dateTime', 'N/A')
+                event_summary = event.get('summary', 'Untitled')
+                log(f"[CALENDAR]   Event {i+1}: {event_summary} at {event_start}")
 
         # Operating hours: 9am - 7pm (last appointment at 6pm)
         OPEN_HOUR = 9
@@ -1066,17 +1086,24 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         if one_hour_later.minute > 0:
             next_slot_time += timedelta(hours=1)
 
+        log(f"[CALENDAR] Current time: {now.strftime('%Y-%m-%d %H:%M')}")
+        log(f"[CALENDAR] First possible slot: {next_slot_time.strftime('%Y-%m-%d %H:%M')}")
+
         # Check if next slot is after hours - if so, start from next day at 9am
         if next_slot_time.hour >= CLOSE_HOUR or next_slot_time.hour < OPEN_HOUR:
             # Move to next day at 9am
             next_slot_time = (next_slot_time + timedelta(days=1)).replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
-            log(f"[CALENDAR] After hours, moving to next day at 9am: {next_slot_time}")
+            log(f"[CALENDAR] After hours, moving to next day at 9am: {next_slot_time.strftime('%Y-%m-%d %H:%M')}")
 
         # Search for first available slot
         max_search_date = now + timedelta(days=days_ahead)
         current_check = next_slot_time
+        slots_checked = 0
+
+        log(f"[CALENDAR] Starting search from {current_check.strftime('%Y-%m-%d %H:%M')} to {max_search_date.strftime('%Y-%m-%d %H:%M')}")
 
         while current_check < max_search_date:
+            slots_checked += 1
             # Check if this hour is within operating hours
             if current_check.hour >= OPEN_HOUR and current_check.hour <= LAST_APPOINTMENT_HOUR:
                 # Check for conflicts with existing events
@@ -1106,7 +1133,7 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
                     day_name = current_check.strftime("%A")
                     time_display = current_check.strftime("%-I%p").lower()
 
-                    log(f"[CALENDAR] First available slot: {day_name} at {time_display}")
+                    log(f"[CALENDAR] ✓ FOUND available slot after checking {slots_checked} slots: {day_name} at {time_display}")
 
                     return [{
                         "datetime": slot_iso,
@@ -1121,19 +1148,140 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
                 current_check = (current_check + timedelta(days=1)).replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
 
         # No slots found
-        log(f"[CALENDAR] No available slots found in next {days_ahead} days")
+        log(f"[CALENDAR] ✗ No available slots found in next {days_ahead} days after checking {slots_checked} slots")
+        log(f"[CALENDAR] This should NOT happen - calendar might be fully booked or logic error")
         return []
 
     except Exception as e:
-        log(f"[ERROR] Failed to get calendar slots: {e}")
+        log(f"[ERROR] ✗ Failed to get calendar slots: {e}")
         import traceback
         log(f"[ERROR] Traceback: {traceback.format_exc()}")
         return []
 
+def get_next_business_day_slot() -> dict:
+    """Get first available slot for next business day (Monday-Friday) starting at 10am
+
+    Returns slot in format: {"datetime": "2025-11-19T10:00:00", "display": "Tuesday at 10am"}
+    If 10am is booked, tries 11am, 12pm, etc.
+    """
+    if not GOOGLE_CALENDAR_AVAILABLE:
+        log("[WARN] Google Calendar not available - returning mock next business day slot")
+        now = datetime.now()
+        # Calculate next business day
+        next_day = now + timedelta(days=1)
+        while next_day.weekday() >= 5:  # Skip Saturday (5) and Sunday (6)
+            next_day += timedelta(days=1)
+        next_slot = next_day.replace(hour=10, minute=0, second=0, microsecond=0)
+
+        return {
+            "datetime": next_slot.isoformat(),
+            "display": f"{next_slot.strftime('%A at %-I%p').lower()}"
+        }
+
+    try:
+        # Load service account credentials
+        google_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+
+        if google_creds_json:
+            import json
+            credentials_info = json.loads(google_creds_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[INFO] Loaded Google Calendar credentials for next business day slot")
+        elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_CALENDAR_SERVICE_ACCOUNT,
+                scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            log("[INFO] Loaded Google Calendar credentials from file for next business day slot")
+        else:
+            log(f"[WARN] No Google Calendar credentials found for next business day slot")
+            return {}
+
+        service = build('calendar', 'v3', credentials=credentials)
+
+        # Calculate next business day (Monday-Friday)
+        now = datetime.now()
+        next_day = now + timedelta(days=1)
+        while next_day.weekday() >= 5:  # Skip Saturday (5) and Sunday (6)
+            next_day += timedelta(days=1)
+
+        log(f"[NEXT_DAY_SLOT] Next business day: {next_day.strftime('%A %Y-%m-%d')}")
+
+        # Get events for next business day
+        day_start = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = next_day.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        events_result = service.events().list(
+            calendarId=GOOGLE_CALENDAR_EMAIL,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+
+        existing_events = events_result.get('items', [])
+        log(f"[NEXT_DAY_SLOT] Found {len(existing_events)} existing events on {next_day.strftime('%A')}")
+
+        # Operating hours: 9am - 7pm (last appointment at 6pm)
+        OPEN_HOUR = 9
+        LAST_APPOINTMENT_HOUR = 18  # 6pm
+
+        # Try starting at 10am, then 11am, 12pm, etc.
+        for hour in range(10, LAST_APPOINTMENT_HOUR + 1):
+            check_time = next_day.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+            # Check for conflicts
+            conflict = False
+            for event in existing_events:
+                event_start = event.get('start', {}).get('dateTime', '')
+                event_end = event.get('end', {}).get('dateTime', '')
+
+                if event_start and event_end:
+                    event_start_dt = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                    event_end_dt = datetime.fromisoformat(event_end.replace('Z', '+00:00'))
+
+                    # Check if our slot overlaps (1 hour slot)
+                    slot_end = check_time + timedelta(hours=1)
+
+                    if (check_time < event_end_dt and slot_end > event_start_dt):
+                        conflict = True
+                        log(f"[NEXT_DAY_SLOT] {hour}:00 conflicts with: {event.get('summary', 'Untitled')}")
+                        break
+
+            if not conflict:
+                # Found available slot!
+                day_name = check_time.strftime("%A")
+                time_display = check_time.strftime("%-I%p").lower()
+
+                log(f"[NEXT_DAY_SLOT] First available morning slot: {day_name} at {time_display}")
+
+                return {
+                    "datetime": check_time.isoformat(),
+                    "display": f"{day_name} at {time_display}"
+                }
+
+        # No morning slots available on next business day
+        log(f"[NEXT_DAY_SLOT] No available slots on {next_day.strftime('%A')}")
+        return {}
+
+    except Exception as e:
+        log(f"[ERROR] Failed to get next business day slot: {e}")
+        import traceback
+        log(f"[ERROR] Traceback: {traceback.format_exc()}")
+        return {}
+
 def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_email: str, customer_phone: str, business_type: str) -> bool:
     """Book an appointment in Google Calendar"""
+    log(f"[BOOKING] Attempting to book calendar appointment")
+    log(f"[BOOKING] Customer: {customer_name}, Business: {business_type}")
+    log(f"[BOOKING] Email: {customer_email or 'Not provided'}, Phone: {customer_phone or 'Not provided'}")
+    log(f"[BOOKING] Slot: {slot_datetime}")
+
     if not GOOGLE_CALENDAR_AVAILABLE:
-        log("[WARN] Google Calendar not available - skipping booking")
+        log("[BOOKING] ✗ Google Calendar not available - skipping booking")
         return False
 
     try:
@@ -1144,26 +1292,34 @@ def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_e
         if google_creds_json:
             # Load from environment variable (Railway)
             import json
+            log("[BOOKING] Loading credentials from environment variable...")
             credentials_info = json.loads(google_creds_json)
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=['https://www.googleapis.com/auth/calendar']
             )
+            log("[BOOKING] ✓ Credentials loaded from env var")
         elif os.path.exists(GOOGLE_CALENDAR_SERVICE_ACCOUNT):
             # Load from file (local development)
+            log(f"[BOOKING] Loading credentials from file: {GOOGLE_CALENDAR_SERVICE_ACCOUNT}")
             credentials = service_account.Credentials.from_service_account_file(
                 GOOGLE_CALENDAR_SERVICE_ACCOUNT,
                 scopes=['https://www.googleapis.com/auth/calendar']
             )
+            log("[BOOKING] ✓ Credentials loaded from file")
         else:
-            log(f"[WARN] No Google Calendar credentials found")
+            log(f"[BOOKING] ✗ No Google Calendar credentials found")
             return False
 
+        log("[BOOKING] Building Google Calendar service...")
         service = build('calendar', 'v3', credentials=credentials)
+        log("[BOOKING] ✓ Service built successfully")
 
         # Parse slot datetime
         start_time = datetime.fromisoformat(slot_datetime)
         end_time = start_time + timedelta(hours=1)  # 1-hour appointments
+
+        log(f"[BOOKING] Event time: {start_time.strftime('%A, %B %d at %-I:%M%p')} - {end_time.strftime('%-I:%M%p')}")
 
         # Create event
         event = {
@@ -1197,19 +1353,29 @@ This is an implementation call for setting up AI phone agent system.""",
         # Add customer email as attendee if provided
         if customer_email and validate_email(customer_email):
             event['attendees'].append({'email': customer_email})
+            log(f"[BOOKING] Adding attendee: {customer_email}")
+        else:
+            log(f"[BOOKING] No valid email - calendar invite will not be sent to customer")
 
         # Insert event
+        log(f"[BOOKING] Creating event in calendar: {GOOGLE_CALENDAR_EMAIL}")
         created_event = service.events().insert(
             calendarId=GOOGLE_CALENDAR_EMAIL,
             body=event,
             sendUpdates='all'  # Send calendar invites to attendees
         ).execute()
 
-        log(f"[SUCCESS] Calendar appointment booked: {created_event.get('htmlLink')}")
+        event_link = created_event.get('htmlLink', 'N/A')
+        event_id = created_event.get('id', 'N/A')
+        log(f"[BOOKING] ✓ SUCCESS! Calendar appointment booked")
+        log(f"[BOOKING] Event ID: {event_id}")
+        log(f"[BOOKING] Event Link: {event_link}")
         return True
 
     except Exception as e:
-        log(f"[ERROR] Failed to book calendar appointment: {e}")
+        log(f"[BOOKING] ✗ ERROR Failed to book calendar appointment: {e}")
+        import traceback
+        log(f"[BOOKING] Traceback: {traceback.format_exc()}")
         return False
 
 # ======================== Routes ========================
@@ -1415,25 +1581,20 @@ If they say "sign up", "get started", "let's do it", or YES after demo:
 3. ONLY ask for business type if you DON'T already know it from the demo:
    - If coming from demo: You already know their business type - SKIP THIS STEP
    - If direct signup (no demo): Ask "Thanks [Name]! What type of business do you have?"
-4. Say: "Perfect! Would you prefer I follow up with a call or send you an email?"
-
-   IF CALL:
-   - Say: "Perfect! What's the best number to reach you?"
-   - Collect phone number ONLY
-
-   IF EMAIL:
-   - Say: "Perfect! What's your email address?"
-   - Collect email address ONLY
+4. Book implementation appointment:
+   - Say: "Excellent! Let me find available times for your implementation call."
+   - Call get_available_slots function to retrieve available appointments
+   - Call get_next_business_day_slot function to get tomorrow morning's first available slot
+   - Offer BOTH options: "Would you like the first available [slot from get_available_slots], or does [slot from get_next_business_day_slot] work better?"
+   - Customer chooses one of the two options
+   - If customer wants a different time, call get_available_slots again and offer alternatives
+5. Collect email for calendar invitation:
+   - Say: "Perfect! What's your email address so I can send you the calendar invitation?"
    - Confirm it back: "So that's [email] - did I get that right?"
-   - If NO, try once more. If still NO, say: "I'm having trouble catching it clearly. We'll call you back at this number to confirm."
-
-5. Book implementation appointment:
-   - Say: "Excellent! Let me find the first available time for your implementation call."
-   - Call get_available_slots function to retrieve the next available appointment
-   - Say: "I have [Day at Time] available. Does that work for you?"
-   - If they say YES: Call book_appointment function with that slot
-   - Say: "Perfect! You're all set for [Day at Time]. You'll receive a confirmation [via call/email based on preference] shortly. Looking forward to speaking with you then!"
-   - If they say NO: Say "No problem! Let me check what else we have available." Call get_available_slots again and offer the next slot
+   - If NO, try once more. If still NO, say: "No problem, I'll send the confirmation to this phone number."
+6. Confirm booking:
+   - Call book_appointment function with chosen slot
+   - Say: "Great! You're all set for [Day at Time]. I'm sending you a calendar invitation now so you can add it right to your calendar. Looking forward to speaking with you then!"
    - END CALL after booking
 
 ═══════════════════════════════════════════════════════════════
@@ -1459,7 +1620,7 @@ STRICT RULES - DO NOT VIOLATE:
 - Ask ONE question at a time
 - Never mention pricing unless customer asks
 - Demo mode should be SHORT (3-5 exchanges max)
-- Always collect contact preference (call OR email, not both)
+- Always collect email for calendar invitation
 - Always book implementation appointment before ending call
 - Be warm, friendly, and professional
 
@@ -1507,6 +1668,16 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                                     "description": "Number of days to search ahead for available slots (default 14)"
                                                 }
                                             },
+                                            "required": []
+                                        }
+                                    },
+                                    {
+                                        "type": "function",
+                                        "name": "get_next_business_day_slot",
+                                        "description": "Get the first available slot for next business day (Monday-Friday) starting at 10am. If 10am is booked, tries 11am, 12pm, etc. Use this to offer 'tomorrow morning' option to customers.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {},
                                             "required": []
                                         }
                                     },
@@ -1684,6 +1855,21 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                 }
                                 log(f"[FUNCTION RESULT] No available slots found")
 
+                        elif function_name == "get_next_business_day_slot":
+                            next_day_slot = get_next_business_day_slot()
+                            if next_day_slot:
+                                function_result = {
+                                    "next_business_day_slot": next_day_slot,
+                                    "message": f"Next business day slot: {next_day_slot['display']}"
+                                }
+                                log(f"[FUNCTION RESULT] Next business day slot: {next_day_slot['display']}")
+                            else:
+                                function_result = {
+                                    "next_business_day_slot": None,
+                                    "message": "No available slots on next business day"
+                                }
+                                log(f"[FUNCTION RESULT] No next business day slots found")
+
                         elif function_name == "book_appointment":
                             slot_datetime = arguments.get('slot_datetime')
                             slot_display = arguments.get('slot_display')
@@ -1849,13 +2035,6 @@ async def status_callback(request: Request):
         else:
             # Normal successful call flow
 
-            # Only send email if they chose email as contact preference
-            if contact_preference == "email" and customer_email:
-                log(f"Sending follow-up email to {customer_email}")
-                send_demo_follow_up(customer_name, customer_email, business_type)
-            elif contact_preference == "call":
-                log(f"Skipping email - customer chose call preference: {customer_phone}")
-
             # Book calendar appointment if slot was chosen
             if appointment_datetime and customer_name and business_type:
                 log(f"Booking calendar appointment for {appointment_display}")
@@ -1871,6 +2050,16 @@ async def status_callback(request: Request):
                 else:
                     log(f"✗ Failed to book calendar appointment")
 
+            # Always send confirmation email if we have customer email
+            if customer_email and appointment_datetime:
+                log(f"Sending calendar confirmation email to {customer_email}")
+                send_demo_follow_up(customer_name, customer_email, business_type)
+            elif customer_email and not appointment_datetime:
+                log(f"Sending follow-up email (no appointment booked) to {customer_email}")
+                send_demo_follow_up(customer_name, customer_email, business_type)
+            else:
+                log(f"No email to send - customer_email: {customer_email}, appointment: {appointment_datetime}")
+
             # Only send notification to business owner if we collected meaningful data
             if customer_email or customer_phone or (business_type and business_type != "business") or company_name:
                 log(f"Sending notification to business owner")
@@ -1880,7 +2069,7 @@ async def status_callback(request: Request):
                     customer_phone or caller_phone,
                     business_type,
                     company_name,
-                    contact_preference,
+                    None,  # contact_preference no longer used
                     appointment_display
                 )
             else:
