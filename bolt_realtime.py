@@ -1042,7 +1042,19 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         elif google_creds_json:
             import json
             log("[CALENDAR] Found GOOGLE_SERVICE_ACCOUNT_JSON env var")
+            log(f"[CALENDAR] JSON length: {len(google_creds_json)} chars")
+
+            # Parse JSON
             credentials_info = json.loads(google_creds_json)
+
+            # Fix private key newlines if they got corrupted
+            if 'private_key' in credentials_info:
+                pk = credentials_info['private_key']
+                # If newlines are literal \n instead of actual newlines, fix them
+                if '\\n' in pk and '\n' not in pk:
+                    log("[CALENDAR] Fixing escaped newlines in private key")
+                    credentials_info['private_key'] = pk.replace('\\n', '\n')
+
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=['https://www.googleapis.com/auth/calendar']
@@ -1214,6 +1226,11 @@ def get_next_business_day_slot() -> dict:
         elif google_creds_json:
             import json
             credentials_info = json.loads(google_creds_json)
+            # Fix private key newlines if they got corrupted
+            if 'private_key' in credentials_info:
+                pk = credentials_info['private_key']
+                if '\\n' in pk and '\n' not in pk:
+                    credentials_info['private_key'] = pk.replace('\\n', '\n')
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=['https://www.googleapis.com/auth/calendar']
@@ -1336,6 +1353,12 @@ def book_calendar_appointment(slot_datetime: str, customer_name: str, customer_e
             import json
             log("[BOOKING] Loading credentials from environment variable...")
             credentials_info = json.loads(google_creds_json)
+            # Fix private key newlines if they got corrupted
+            if 'private_key' in credentials_info:
+                pk = credentials_info['private_key']
+                if '\\n' in pk and '\n' not in pk:
+                    log("[BOOKING] Fixing escaped newlines in private key")
+                    credentials_info['private_key'] = pk.replace('\\n', '\n')
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=['https://www.googleapis.com/auth/calendar']
