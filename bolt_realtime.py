@@ -1450,7 +1450,44 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                 "instructions": system_message,
                                 "modalities": ["text", "audio"],
                                 "temperature": TEMPERATURE,
-                                "input_audio_transcription": {"model": "whisper-1"}  # Enable user speech transcription
+                                "input_audio_transcription": {"model": "whisper-1"},  # Enable user speech transcription
+                                "tools": [
+                                    {
+                                        "type": "function",
+                                        "name": "get_available_slots",
+                                        "description": "Get available appointment time slots from the calendar. Call this when the user is ready to book an implementation appointment.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "days_ahead": {
+                                                    "type": "number",
+                                                    "description": "Number of days to look ahead for available slots (default 7)"
+                                                }
+                                            },
+                                            "required": []
+                                        }
+                                    },
+                                    {
+                                        "type": "function",
+                                        "name": "book_appointment",
+                                        "description": "Book an appointment slot. Call this after the user selects their preferred time slot.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "slot_datetime": {
+                                                    "type": "string",
+                                                    "description": "ISO 8601 datetime string for the appointment (e.g., '2025-11-18T10:00:00')"
+                                                },
+                                                "slot_display": {
+                                                    "type": "string",
+                                                    "description": "Human-readable description of the slot (e.g., 'Monday at 10am')"
+                                                }
+                                            },
+                                            "required": ["slot_datetime", "slot_display"]
+                                        }
+                                    }
+                                ],
+                                "tool_choice": "auto"
                             }
                         }
                         await openai_ws.send(json.dumps(session_update))
@@ -1570,6 +1607,64 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                     elif response['type'] == 'input_audio_buffer.speech_started':
                         log("Speech started - handling interruption")
                         await handle_speech_started_event()
+
+                    elif response['type'] == 'response.function_call_arguments.done':
+                        # Function call from the AI - execute it and return the result
+                        call_id = response.get('call_id')
+                        function_name = response.get('name')
+                        arguments_str = response.get('arguments', '{}')
+
+                        log(f"[FUNCTION CALL] {function_name} with args: {arguments_str}")
+
+                        try:
+                            arguments = json.loads(arguments_str)
+                        except json.JSONDecodeError:
+                            arguments = {}
+
+                        # Execute the function
+                        function_result = None
+                        session = SESSIONS.get(call_sid)
+
+                        if function_name == "get_available_slots":
+                            days_ahead = arguments.get('days_ahead', 7)
+                            slots = get_available_calendar_slots(days_ahead=days_ahead, num_slots=3)
+                            function_result = {"slots": slots}
+                            log(f"[FUNCTION RESULT] get_available_slots returned {len(slots)} slots")
+
+                        elif function_name == "book_appointment":
+                            slot_datetime = arguments.get('slot_datetime')
+                            slot_display = arguments.get('slot_display')
+
+                            if slot_datetime and slot_display and session:
+                                # Store appointment info in session
+                                session['appointment_datetime'] = slot_datetime
+                                session['appointment_display'] = slot_display
+                                log(f"[APPOINTMENT] Stored in session: {slot_display} ({slot_datetime})")
+
+                                function_result = {
+                                    "success": True,
+                                    "message": f"Appointment booked for {slot_display}"
+                                }
+                            else:
+                                function_result = {
+                                    "success": False,
+                                    "message": "Missing required information for booking"
+                                }
+
+                        # Send function result back to OpenAI
+                        if function_result is not None:
+                            function_output = {
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": json.dumps(function_result)
+                                }
+                            }
+                            await openai_ws.send(json.dumps(function_output))
+
+                            # Trigger the AI to respond with the function result
+                            await openai_ws.send(json.dumps({"type": "response.create"}))
 
                     elif response['type'] == 'error':
                         error_info = response.get('error', {})
