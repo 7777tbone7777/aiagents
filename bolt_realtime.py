@@ -900,7 +900,9 @@ def extract_customer_info(text, session, is_user_speech=True):
             'school', 'daycare', 'library', 'bookstore', 'boutique', 'store',
             'bar', 'pub', 'nightclub', 'theater', 'theatre', 'museum', 'gallery',
             'garage', 'dealership', 'workshop', 'factory', 'warehouse', 'studio',
-            'office', 'firm', 'agency', 'center'
+            'office', 'firm', 'agency', 'center', 'company', 'business',
+            'hvac', 'plumbing', 'electrical', 'contractor', 'roofing', 'landscaping',
+            'cleaning', 'painting', 'flooring', 'carpentry', 'handyman'
         ]
 
         # Priority 1: Look for multi-word business phrases (e.g., "dental office", "nail salon", "tattoo shop")
@@ -2159,7 +2161,8 @@ async def status_callback(request: Request):
         session = SESSIONS[call_sid]
         customer_email = session.get('customer_email')
         customer_phone = session.get('customer_phone')
-        customer_name = session.get('customer_name') or session.get('company_name') or "there"
+        # Prefer customer_name, but don't use company_name as fallback for greeting (sounds weird)
+        customer_name = session.get('customer_name') or "there"
         caller_phone = session.get('caller_phone')
         business_type = session.get('business_type') or "business"
         company_name = session.get('company_name')
