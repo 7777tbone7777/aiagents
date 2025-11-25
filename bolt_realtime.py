@@ -325,9 +325,9 @@ def elevenlabs_tts_sync(text: str) -> str:
         audio_generator = client.text_to_speech.convert(
             voice_id=ELEVENLABS_VOICE_ID,
             text=text,
-            model_id="eleven_turbo_v2_5",  # Fastest model for real-time
+            model_id="eleven_multilingual_v2",  # Better pacing than turbo (slightly slower but more natural)
             voice_settings=VoiceSettings(
-                stability=0.5,
+                stability=0.7,  # Higher stability = more measured/slower speech (was 0.5)
                 similarity_boost=0.75,
                 style=0.0,
                 use_speaker_boost=True
