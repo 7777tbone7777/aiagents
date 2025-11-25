@@ -31,3 +31,12 @@ google-api-python-client==2.100.0
 
 # Task Scheduling
 apscheduler==3.10.4
+
+# Error Tracking & Monitoring (Production)
+sentry-sdk[fastapi]==1.39.1
+
+# Premium Voice AI (ElevenLabs)
+elevenlabs==0.2.27
+
+# OpenAI API (for Realtime API support)
+openai==1.12.0
