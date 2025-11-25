@@ -1978,6 +1978,10 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                             log(f"[ElevenLabs] Conversation initiated")
 
                         elif event_type == 'audio':
+                            # DEBUG: Log audio_event structure
+                            audio_event = response.get('audio_event', {})
+                            log(f"[ElevenLabs DEBUG] audio_event keys: {list(audio_event.keys()) if audio_event else 'None'}")
+
                             # ElevenLabs sends audio - forward to Twilio
                             # Check both possible audio formats from API
                             audio_base64 = None
@@ -2016,6 +2020,10 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                                 await elevenlabs_ws.send(json.dumps(pong_message))
 
                         elif event_type == 'agent_response':
+                            # DEBUG: Log agent_response_event structure
+                            agent_response_event = response.get('agent_response_event', {})
+                            log(f"[ElevenLabs DEBUG] agent_response_event keys: {list(agent_response_event.keys()) if agent_response_event else 'None'}")
+
                             # Agent response with audio - extract and forward to Twilio
                             audio_base64 = response.get('audio', {}).get('chunk') or response.get('audio_base_64')
                             if audio_base64 and stream_sid:
