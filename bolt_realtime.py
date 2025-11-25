@@ -1886,7 +1886,7 @@ async def get_elevenlabs_signed_url():
         log(f"[ElevenLabs] Error getting signed URL: {e}")
         raise
 
-async def handle_media_stream_elevenlabs(websocket: WebSocket, call_sid: str):
+async def handle_media_stream_elevenlabs(websocket: WebSocket):
     """
     Handle Twilio Media Stream with ElevenLabs Conversational AI
 
@@ -1896,9 +1896,10 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket, call_sid: str):
     3. Bridge audio: Twilio <-> ElevenLabs
     4. Handle events: audio, transcripts, interruptions
     """
-    log(f"[ElevenLabs] Starting media stream handler for call {call_sid}")
+    log(f"[ElevenLabs] Starting media stream handler")
 
     stream_sid = None
+    call_sid = None
     elevenlabs_ws = None
 
     try:
@@ -1913,26 +1914,31 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket, call_sid: str):
             ssl=ssl.create_default_context(cafile=certifi.where())
         )
 
-        log(f"[ElevenLabs] Connected to Conversational AI for call {call_sid}")
+        log(f"[ElevenLabs] Connected to Conversational AI")
 
         async def receive_from_twilio():
             """Receive audio from Twilio and forward to ElevenLabs"""
-            nonlocal stream_sid
+            nonlocal stream_sid, call_sid
 
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
 
-                    if data['event'] == 'media':
+                    if data['event'] == 'connected':
+                        log(f"[Twilio] Connected event received")
+                        continue
+
+                    elif data['event'] == 'start':
+                        stream_sid = data['start']['streamSid']
+                        call_sid = data['start'].get('callSid')
+                        log(f"[Twilio] Stream started: {stream_sid}, Call SID: {call_sid}")
+
+                    elif data['event'] == 'media':
                         # Forward audio to ElevenLabs (already base64 μ-law from Twilio)
                         audio_message = {
                             "user_audio_chunk": data['media']['payload']
                         }
                         await elevenlabs_ws.send(json.dumps(audio_message))
-
-                    elif data['event'] == 'start':
-                        stream_sid = data['start']['streamSid']
-                        log(f"[Twilio] Stream started: {stream_sid}")
 
                         # Send conversation initiation (optional - can override agent config)
                         # For now, we rely on the agent config from ElevenLabs dashboard
@@ -2061,60 +2067,7 @@ async def handle_media_stream(websocket: WebSocket):
     # Feature flag routing: ElevenLabs Conversational AI vs OpenAI Realtime API
     if USE_ELEVENLABS_CONVERSATIONAL_AI:
         log("[ROUTING] Using ElevenLabs Conversational AI")
-
-        # Wait for start message to get call_sid (first message is usually "connected")
-        call_sid = None
-        messages_received = []
-
-        # Read messages until we get the "start" event
-        while not call_sid:
-            message = await websocket.receive_text()
-            data = json.loads(message)
-            messages_received.append(message)
-
-            log(f"[DEBUG] Received event: {data.get('event')}")
-
-            if data.get('event') == 'start':
-                # Try multiple possible locations for call_sid
-                start_data = data.get('start', {})
-                call_sid = (
-                    start_data.get('callSid') or
-                    start_data.get('customParameters', {}).get('CallSid') or
-                    start_data.get('customParameters', {}).get('callSid')
-                )
-                log(f"[DEBUG] Start message received: {json.dumps(data, indent=2)}")
-                log(f"[DEBUG] Extracted call_sid: {call_sid}")
-
-                if not call_sid:
-                    log(f"[ERROR] No call_sid in start data. Start data: {start_data}")
-                    await websocket.close()
-                    return
-                break
-            elif data.get('event') == 'connected':
-                log(f"[DEBUG] Received connected event, waiting for start...")
-                continue
-            else:
-                log(f"[WARN] Unexpected event before start: {data.get('event')}")
-                continue
-
-        # Route to ElevenLabs handler (replay all received messages, then continue)
-        async def message_iterator():
-            # Re-yield all messages we already consumed (connected, start, etc.)
-            for msg in messages_received:
-                yield msg
-            # Then continue with new messages
-            async for msg in websocket.iter_text():
-                yield msg
-
-        # Temporarily replace iter_text with our wrapper
-        original_iter_text = websocket.iter_text
-        websocket.iter_text = message_iterator
-
-        try:
-            await handle_media_stream_elevenlabs(websocket, call_sid)
-        finally:
-            websocket.iter_text = original_iter_text
-
+        await handle_media_stream_elevenlabs(websocket)
         return  # ElevenLabs handler complete
 
     # Otherwise, use OpenAI Realtime API (existing implementation)
