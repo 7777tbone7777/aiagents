@@ -36,7 +36,7 @@ apscheduler==3.10.4
 sentry-sdk[fastapi]==1.39.1
 
 # Premium Voice AI (ElevenLabs)
-elevenlabs==0.2.27
+elevenlabs>=1.0.0
 
 # OpenAI API (for Realtime API support)
 openai==1.12.0

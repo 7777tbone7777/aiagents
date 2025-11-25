@@ -32,10 +32,10 @@ except ImportError:
     SENTRY_AVAILABLE = False
     print("[WARN] Sentry not installed. Run: pip install sentry-sdk")
 
-# ElevenLabs for premium voice quality
+# ElevenLabs for premium voice quality (v1.x API)
 try:
-    from elevenlabs import Voice, VoiceSettings, generate, set_api_key, stream
     from elevenlabs.client import ElevenLabs
+    from elevenlabs import VoiceSettings
     ELEVENLABS_AVAILABLE = True
 except ImportError:
     ELEVENLABS_AVAILABLE = False
@@ -175,9 +175,8 @@ else:
     if not SENTRY_DSN:
         print("[INFO] Sentry DSN not configured - error tracking disabled")
 
-# Initialize ElevenLabs
+# Initialize ElevenLabs (v1.x API - client is created per-request)
 if USE_ELEVENLABS:
-    set_api_key(ELEVENLABS_API_KEY)
     print(f"[INFO] ElevenLabs initialized with voice: {ELEVENLABS_VOICE_ID}")
 else:
     print("[INFO] ElevenLabs not configured - using OpenAI voice only")
