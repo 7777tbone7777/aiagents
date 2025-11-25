@@ -1943,8 +1943,10 @@ If they say "demo", "show me", "demonstration", "how does it work", or similar:
 1. Ask: "Perfect! What type of business do you have?"
 2. They tell you business type (HVAC, dental, barbershop, etc.)
 3. Say EXACTLY: "Great! Let me show you how I'd handle calls for your [BusinessType]. Ready?"
-4. STOP AND WAIT for their confirmation (they will say "yes", "ready", "sure", etc.)
-5. ONLY AFTER they confirm, SWITCH INTO DEMO CHARACTER - You are now the receptionist for "ACME [BusinessType]"
+4. STOP generating text here. The user will respond with "yes", "ready", "sure", etc.
+   ⚠️ CRITICAL: DO NOT generate your demo character greeting in this same response!
+   ⚠️ You MUST wait to receive the user's actual confirmation before continuing.
+5. ONLY AFTER you receive their verbal confirmation, SWITCH INTO DEMO CHARACTER - You are now the receptionist for "ACME [BusinessType]"
    - Greeting: "Thanks for calling ACME [BusinessType], this is Jack. How can I help you?"
    - They will roleplay as a customer (e.g., "My AC is broken", "I need a dentist appointment")
    - Respond with EMPATHY: "I'm sorry to hear that. That's never fun."
@@ -2056,7 +2058,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                 "type": "server_vad",
                                 "threshold": 0.7,  # Balanced: not too sensitive (0.8 missed speech), not too low (0.6 false interrupts) (default 0.5)
                                 "prefix_padding_ms": 300,  # Audio before speech (default 300ms)
-                                "silence_duration_ms": 2500  # Wait 2.5 seconds of silence before ending turn (prevents interruptions)
+                                "silence_duration_ms": 1500  # Wait 1.5 seconds of silence before ending turn
                             },
                             "input_audio_format": "g711_ulaw",
                             "instructions": system_message,
