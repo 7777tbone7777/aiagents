@@ -1990,6 +1990,10 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                             elif response.get('audio', {}).get('chunk'):
                                 audio_base64 = response['audio']['chunk']
 
+                            # DEBUG: Log extraction results
+                            log(f"[DEBUG] Audio extraction - audio_base64 populated: {audio_base64 is not None}, length: {len(audio_base64) if audio_base64 else 0}")
+                            log(f"[DEBUG] stream_sid: {stream_sid}")
+
                             if audio_base64 and stream_sid:
                                 twilio_message = {
                                     "event": "media",
@@ -1999,6 +2003,9 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                                     }
                                 }
                                 await websocket.send_text(json.dumps(twilio_message))
+                                log(f"[ElevenLabs] Forwarded audio chunk to Twilio ({len(audio_base64)} chars)")
+                            else:
+                                log(f"[DEBUG] NOT forwarding - audio_base64: {audio_base64 is not None}, stream_sid: {stream_sid}")
 
                         elif event_type == 'interruption':
                             # User interrupted agent - clear Twilio playback buffer
