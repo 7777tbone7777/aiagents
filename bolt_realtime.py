@@ -9,7 +9,7 @@ Production Enhancements:
 - Sentry error tracking and monitoring
 - Health monitoring dashboard
 """
-import os, json, base64, asyncio, websockets, ssl, re, time, requests
+import os, json, base64, asyncio, websockets, ssl, re, time, requests, audioop
 import certifi
 from datetime import datetime, timedelta
 from fastapi import FastAPI, WebSocket, Request
@@ -1999,15 +1999,32 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                             log(f"[DEBUG] stream_sid: {stream_sid}")
 
                             if audio_base64 and stream_sid:
-                                twilio_message = {
-                                    "event": "media",
-                                    "streamSid": stream_sid,
-                                    "media": {
-                                        "payload": audio_base64
+                                try:
+                                    # Convert audio from ElevenLabs format (likely PCM16) to μ-law for Twilio
+                                    # Decode base64 to get raw audio bytes
+                                    audio_bytes = base64.b64decode(audio_base64)
+
+                                    # Convert PCM16 16000Hz to μ-law 8000Hz (Twilio format)
+                                    # Step 1: Resample from 16000Hz to 8000Hz (downsample by 2)
+                                    audio_8k = audioop.ratecv(audio_bytes, 2, 1, 16000, 8000, None)[0]
+
+                                    # Step 2: Convert PCM16 to μ-law
+                                    audio_ulaw = audioop.lin2ulaw(audio_8k, 2)
+
+                                    # Step 3: Re-encode to base64
+                                    audio_ulaw_base64 = base64.b64encode(audio_ulaw).decode('utf-8')
+
+                                    twilio_message = {
+                                        "event": "media",
+                                        "streamSid": stream_sid,
+                                        "media": {
+                                            "payload": audio_ulaw_base64
+                                        }
                                     }
-                                }
-                                await websocket.send_text(json.dumps(twilio_message))
-                                log(f"[ElevenLabs] Forwarded audio chunk to Twilio ({len(audio_base64)} chars)")
+                                    await websocket.send_text(json.dumps(twilio_message))
+                                    log(f"[ElevenLabs] Converted and forwarded audio to Twilio (PCM→μ-law, {len(audio_ulaw_base64)} chars)")
+                                except Exception as e:
+                                    log(f"[ERROR] Audio conversion failed: {e}")
                             else:
                                 log(f"[DEBUG] NOT forwarding - audio_base64: {audio_base64 is not None}, stream_sid: {stream_sid}")
 
