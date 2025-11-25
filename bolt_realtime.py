@@ -1938,11 +1938,26 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                         log(f"[Twilio] Stream started: {stream_sid}, Call SID: {call_sid}")
 
                     elif data['event'] == 'media':
-                        # Forward audio to ElevenLabs (already base64 μ-law from Twilio)
-                        audio_message = {
-                            "user_audio_chunk": data['media']['payload']
-                        }
-                        await elevenlabs_ws.send(json.dumps(audio_message))
+                        # Convert audio from Twilio format (μ-law 8kHz) to ElevenLabs format (PCM16 16kHz)
+                        try:
+                            # Decode base64 μ-law audio from Twilio
+                            audio_ulaw = base64.b64decode(data['media']['payload'])
+
+                            # Convert μ-law to PCM16
+                            audio_pcm = audioop.ulaw2lin(audio_ulaw, 2)
+
+                            # Resample from 8kHz to 16kHz (upsample by 2)
+                            audio_16k = audioop.ratecv(audio_pcm, 2, 1, 8000, 16000, None)[0]
+
+                            # Re-encode to base64
+                            audio_base64 = base64.b64encode(audio_16k).decode('utf-8')
+
+                            audio_message = {
+                                "user_audio_chunk": audio_base64
+                            }
+                            await elevenlabs_ws.send(json.dumps(audio_message))
+                        except Exception as e:
+                            log(f"[ERROR] User audio conversion failed: {e}")
 
                         # Send conversation initiation (optional - can override agent config)
                         # For now, we rely on the agent config from ElevenLabs dashboard
