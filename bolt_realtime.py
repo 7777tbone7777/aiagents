@@ -2167,6 +2167,48 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                     # Log failures and issues for debugging
                     if response['type'] == 'response.done':
                         log(f"[DEBUG] response.done details: {json.dumps(response, indent=2)}")
+
+                        # Handle text responses for ElevenLabs TTS
+                        if USE_ELEVENLABS:
+                            try:
+                                # Extract text from response.done output
+                                output = response.get('response', {}).get('output', [])
+                                for item in output:
+                                    if item.get('type') == 'message' and item.get('role') == 'assistant':
+                                        content_parts = item.get('content', [])
+                                        for content in content_parts:
+                                            if content.get('type') == 'text':
+                                                text = content.get('text', '')
+                                                if text:
+                                                    log(f"[ElevenLabs] Got text from response.done: {text}")
+
+                                                    # Save transcript
+                                                    if call_sid:
+                                                        update_call_transcript(call_sid, "assistant", text)
+                                                        log(f"Assistant: {text}")
+
+                                                    # Generate audio with ElevenLabs
+                                                    log("[ElevenLabs] Generating TTS...")
+                                                    mulaw_audio = await elevenlabs_tts_async(text)
+
+                                                    if mulaw_audio:
+                                                        # Send audio to Twilio
+                                                        audio_message = {
+                                                            "event": "media",
+                                                            "streamSid": stream_sid,
+                                                            "media": {"payload": mulaw_audio}
+                                                        }
+                                                        await websocket.send_json(audio_message)
+                                                        log(f"[Audio] Sent μ-law audio to Twilio ({len(mulaw_audio)} chars base64)")
+
+                                                        # Send mark event
+                                                        await send_mark(websocket, stream_sid)
+                                                    else:
+                                                        log("[ERROR] Failed to generate ElevenLabs audio")
+                            except Exception as e:
+                                log(f"[ERROR] Failed to extract/generate ElevenLabs audio from response.done: {e}")
+                                if SENTRY_AVAILABLE and SENTRY_DSN:
+                                    sentry_sdk.capture_exception(e)
                     elif response['type'] == 'conversation.item.input_audio_transcription.failed':
                         log(f"[DEBUG] Transcription failed: {json.dumps(response, indent=2)}")
 
