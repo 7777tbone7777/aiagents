@@ -1356,7 +1356,8 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
                 log(f"[CALENDAR] Private key length: {len(pk)} chars")
                 log(f"[CALENDAR] Private key starts with: {pk[:50]}")
                 log(f"[CALENDAR] Has actual newlines: {chr(10) in pk}")
-                log(f"[CALENDAR] Has backslash-n: {'\\n' in pk}")
+                has_backslash_n = '\\n' in pk
+                log(f"[CALENDAR] Has backslash-n: {has_backslash_n}")
 
                 # Count lines - should be ~28 lines for a proper RSA key
                 lines = pk.split('\n')
@@ -2120,54 +2121,52 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             "session": session_config
                         }
                         session_update["session"]["tools"] = [
-                                    {
-                                        "type": "function",
-                                        "name": "get_available_slots",
-                                        "description": "Get the first available appointment slot from the calendar. Returns the next available time starting 1 hour from now during business hours (9am-7pm daily). Call this when the user agrees to book their implementation appointment.",
-                                        "parameters": {
-                                            "type": "object",
-                                            "properties": {
-                                                "days_ahead": {
-                                                    "type": "number",
-                                                    "description": "Number of days to search ahead for available slots (default 14)"
-                                                }
-                                            },
-                                            "required": []
+                            {
+                                "type": "function",
+                                "name": "get_available_slots",
+                                "description": "Get the first available appointment slot from the calendar. Returns the next available time starting 1 hour from now during business hours (9am-7pm daily). Call this when the user agrees to book their implementation appointment.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "days_ahead": {
+                                            "type": "number",
+                                            "description": "Number of days to search ahead for available slots (default 14)"
                                         }
                                     },
-                                    {
-                                        "type": "function",
-                                        "name": "get_next_business_day_slot",
-                                        "description": "Get the first available slot for next business day (Monday-Friday) starting at 10am. If 10am is booked, tries 11am, 12pm, etc. Use this to offer 'tomorrow morning' option to customers.",
-                                        "parameters": {
-                                            "type": "object",
-                                            "properties": {},
-                                            "required": []
+                                    "required": []
+                                }
+                            },
+                            {
+                                "type": "function",
+                                "name": "get_next_business_day_slot",
+                                "description": "Get the first available slot for next business day (Monday-Friday) starting at 10am. If 10am is booked, tries 11am, 12pm, etc. Use this to offer 'tomorrow morning' option to customers.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": []
+                                }
+                            },
+                            {
+                                "type": "function",
+                                "name": "book_appointment",
+                                "description": "Book an appointment slot. Call this after the user selects their preferred time slot.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "slot_datetime": {
+                                            "type": "string",
+                                            "description": "ISO 8601 datetime string for the appointment (e.g., '2025-11-18T10:00:00')"
+                                        },
+                                        "slot_display": {
+                                            "type": "string",
+                                            "description": "Human-readable description of the slot (e.g., 'Monday at 10am')"
                                         }
                                     },
-                                    {
-                                        "type": "function",
-                                        "name": "book_appointment",
-                                        "description": "Book an appointment slot. Call this after the user selects their preferred time slot.",
-                                        "parameters": {
-                                            "type": "object",
-                                            "properties": {
-                                                "slot_datetime": {
-                                                    "type": "string",
-                                                    "description": "ISO 8601 datetime string for the appointment (e.g., '2025-11-18T10:00:00')"
-                                                },
-                                                "slot_display": {
-                                                    "type": "string",
-                                                    "description": "Human-readable description of the slot (e.g., 'Monday at 10am')"
-                                                }
-                                            },
-                                            "required": ["slot_datetime", "slot_display"]
-                                        }
-                                    }
-                                ],
-                                "tool_choice": "auto"
+                                    "required": ["slot_datetime", "slot_display"]
+                                }
                             }
-                        }
+                        ]
+                        session_update["session"]["tool_choice"] = "auto"
                         await openai_ws.send(json.dumps(session_update))
 
                         # Trigger initial greeting (greeting text is in system instructions)
