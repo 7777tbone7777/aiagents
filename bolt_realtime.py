@@ -132,7 +132,7 @@ SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
 
 # Business configuration
-AGENT_NAME = os.getenv("AGENT_NAME", "Maria")
+AGENT_NAME = os.getenv("AGENT_NAME", "Jack")
 COMPANY_NAME = os.getenv("COMPANY_NAME", "Bolt AI Group")
 PRODUCT_PITCH = os.getenv("PRODUCT_PITCH", "We build custom AI agents for small businesses that answer every call 24/7, book appointments automatically, handle customer questions, and ensure you never lose business to a missed call")
 MONTHLY_PRICE = os.getenv("MONTHLY_PRICE", "$199")
@@ -862,7 +862,7 @@ def send_demo_follow_up(customer_name, customer_email, business_type, appointmen
     <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #0066cc;">Hi {customer_name}!</h2>
 
-        <p>Thanks for trying our demo! I hope you got a feel for how Maria can handle calls for your {business_type} business 24/7.</p>
+        <p>Thanks for trying our demo! I hope you got a feel for how Jack can handle calls for your {business_type} business 24/7.</p>
 
         <p>As you saw in the demo, our AI phone solution can help your {business_type} by:</p>
 
@@ -1927,7 +1927,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                         # Configure OpenAI session based on business
                         if industry == 'sales':
-                            greeting = "Hi! I'm Maria with Bolt AI Group. We build AI agents that answer calls 24/7 because missing call is like missing money. Are you interested in a quick demo, or are you ready to get set up?"
+                            greeting = "Hi! I'm Jack with Bolt AI Group. We build AI agents that answer calls 24/7 because missing calls is like missing money. Are you interested in a quick demo, or are you ready to get set up?"
                             system_message = f"""You are {agent_name}, an enthusiastic AI sales agent for {business_name}.
 
 CRITICAL: Your FIRST response must be EXACTLY this greeting word-for-word:
@@ -1945,7 +1945,7 @@ If they say "demo", "show me", "demonstration", "how does it work", or similar:
 3. Say EXACTLY: "Great! Let me show you how I'd handle calls for your [BusinessType]. Ready?"
 4. Wait for their response, then IMMEDIATELY switch into character WITHOUT announcing the pause
 5. SWITCH INTO DEMO CHARACTER - You are now the receptionist for "ACME [BusinessType]"
-   - Greeting: "Thanks for calling ACME [BusinessType], this is Maria. How can I help you?"
+   - Greeting: "Thanks for calling ACME [BusinessType], this is Jack. How can I help you?"
    - They will roleplay as a customer (e.g., "My AC is broken", "I need a dentist appointment")
    - Respond with EMPATHY: "I'm sorry to hear that. That's never fun."
 
@@ -2021,7 +2021,7 @@ CRITICAL CHARACTER SWITCHING:
 - When breaking character after demo, clearly signal: "Alright, so that's how I'd handle calls..."
 - In demo mode, you ARE the ACME receptionist - speak as that character
 - DO NOT announce pauses or say "I'm going to pause" - just switch naturally
-- Outside demo mode, you are Maria from Bolt AI Group
+- Outside demo mode, you are Jack from Bolt AI Group
 
 BUSINESS NAME GENERATION:
 - Auto-generate demo business names as "ACME [BusinessType]"
