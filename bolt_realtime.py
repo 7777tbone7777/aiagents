@@ -2056,7 +2056,7 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                 "type": "server_vad",
                                 "threshold": 0.7,  # Balanced: not too sensitive (0.8 missed speech), not too low (0.6 false interrupts) (default 0.5)
                                 "prefix_padding_ms": 300,  # Audio before speech (default 300ms)
-                                "silence_duration_ms": 1200  # Longer silence before turn ends
+                                "silence_duration_ms": 2500  # Wait 2.5 seconds of silence before ending turn (prevents interruptions)
                             },
                             "input_audio_format": "g711_ulaw",
                             "instructions": system_message,
