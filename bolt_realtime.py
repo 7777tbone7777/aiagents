@@ -2062,31 +2062,47 @@ async def handle_media_stream(websocket: WebSocket):
     if USE_ELEVENLABS_CONVERSATIONAL_AI:
         log("[ROUTING] Using ElevenLabs Conversational AI")
 
-        # Wait for first message to get call_sid
-        first_message = await websocket.receive_text()
-        data = json.loads(first_message)
-
+        # Wait for start message to get call_sid (first message is usually "connected")
         call_sid = None
-        if data.get('event') == 'start':
-            # Try multiple possible locations for call_sid
-            start_data = data.get('start', {})
-            call_sid = (
-                start_data.get('callSid') or
-                start_data.get('customParameters', {}).get('CallSid') or
-                start_data.get('customParameters', {}).get('callSid')
-            )
-            log(f"[DEBUG] Start message received: {json.dumps(data, indent=2)}")
-            log(f"[DEBUG] Extracted call_sid: {call_sid}")
+        messages_received = []
 
-        if not call_sid:
-            log(f"[ERROR] No call_sid found in start message. Data: {json.dumps(data)}")
-            await websocket.close()
-            return
+        # Read messages until we get the "start" event
+        while not call_sid:
+            message = await websocket.receive_text()
+            data = json.loads(message)
+            messages_received.append(message)
 
-        # Route to ElevenLabs handler (receives first message manually, so recreate iterator)
-        # We need to create a wrapper that yields the first message then continues
+            log(f"[DEBUG] Received event: {data.get('event')}")
+
+            if data.get('event') == 'start':
+                # Try multiple possible locations for call_sid
+                start_data = data.get('start', {})
+                call_sid = (
+                    start_data.get('callSid') or
+                    start_data.get('customParameters', {}).get('CallSid') or
+                    start_data.get('customParameters', {}).get('callSid')
+                )
+                log(f"[DEBUG] Start message received: {json.dumps(data, indent=2)}")
+                log(f"[DEBUG] Extracted call_sid: {call_sid}")
+
+                if not call_sid:
+                    log(f"[ERROR] No call_sid in start data. Start data: {start_data}")
+                    await websocket.close()
+                    return
+                break
+            elif data.get('event') == 'connected':
+                log(f"[DEBUG] Received connected event, waiting for start...")
+                continue
+            else:
+                log(f"[WARN] Unexpected event before start: {data.get('event')}")
+                continue
+
+        # Route to ElevenLabs handler (replay all received messages, then continue)
         async def message_iterator():
-            yield first_message  # Re-yield the first message we already consumed
+            # Re-yield all messages we already consumed (connected, start, etc.)
+            for msg in messages_received:
+                yield msg
+            # Then continue with new messages
             async for msg in websocket.iter_text():
                 yield msg
 
