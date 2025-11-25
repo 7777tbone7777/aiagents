@@ -147,10 +147,15 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "production")
 SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))  # 10% of requests
 
-# ElevenLabs configuration (premium voice)
+# ElevenLabs configuration (premium voice TTS)
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel voice
 USE_ELEVENLABS = bool(ELEVENLABS_API_KEY and ELEVENLABS_AVAILABLE)
+
+# ElevenLabs Conversational AI configuration (full conversation platform)
+ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID")
+ELEVENLABS_CONVERSATIONAL_API_KEY = os.getenv("ELEVENLABS_CONVERSATIONAL_API_KEY", ELEVENLABS_API_KEY)  # Fall back to TTS key
+USE_ELEVENLABS_CONVERSATIONAL_AI = os.getenv("USE_ELEVENLABS_CONVERSATIONAL_AI", "false").lower() == "true"
 
 # WebSocket reconnection configuration
 WS_MAX_RETRIES = 3
@@ -176,8 +181,15 @@ else:
         print("[INFO] Sentry DSN not configured - error tracking disabled")
 
 # Initialize ElevenLabs (v1.x API - client is created per-request)
-if USE_ELEVENLABS:
-    print(f"[INFO] ElevenLabs initialized with voice: {ELEVENLABS_VOICE_ID}")
+if USE_ELEVENLABS_CONVERSATIONAL_AI:
+    if not ELEVENLABS_AGENT_ID:
+        print("[WARN] USE_ELEVENLABS_CONVERSATIONAL_AI is true but ELEVENLABS_AGENT_ID is missing!")
+        USE_ELEVENLABS_CONVERSATIONAL_AI = False
+    else:
+        print(f"[INFO] ElevenLabs Conversational AI enabled with agent: {ELEVENLABS_AGENT_ID}")
+        print(f"[INFO] Using voice platform - OpenAI integration disabled")
+elif USE_ELEVENLABS:
+    print(f"[INFO] ElevenLabs TTS initialized with voice: {ELEVENLABS_VOICE_ID}")
 else:
     print("[INFO] ElevenLabs not configured - using OpenAI voice only")
 
@@ -1851,11 +1863,238 @@ async def handle_incoming_call(request: Request):
 
     return HTMLResponse(content=str(response), media_type="application/xml")
 
+# ======================== ElevenLabs Conversational AI Integration ========================
+
+async def get_elevenlabs_signed_url():
+    """Get signed URL for authenticated ElevenLabs Conversational AI connection"""
+    try:
+        url = f"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={ELEVENLABS_AGENT_ID}"
+        headers = {"xi-api-key": ELEVENLABS_CONVERSATIONAL_API_KEY}
+
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            raise Exception(f"Failed to get signed URL: {response.status_code} - {response.text}")
+
+        data = response.json()
+        signed_url = data.get("signed_url")
+        if not signed_url:
+            raise Exception("No signed_url in response")
+
+        log(f"[ElevenLabs] Got signed URL: {signed_url[:50]}...")
+        return signed_url
+    except Exception as e:
+        log(f"[ElevenLabs] Error getting signed URL: {e}")
+        raise
+
+async def handle_media_stream_elevenlabs(websocket: WebSocket, call_sid: str):
+    """
+    Handle Twilio Media Stream with ElevenLabs Conversational AI
+
+    Flow:
+    1. Get signed URL from ElevenLabs API
+    2. Connect to ElevenLabs WebSocket
+    3. Bridge audio: Twilio <-> ElevenLabs
+    4. Handle events: audio, transcripts, interruptions
+    """
+    log(f"[ElevenLabs] Starting media stream handler for call {call_sid}")
+
+    stream_sid = None
+    elevenlabs_ws = None
+
+    try:
+        # Get signed URL for authentication
+        signed_url = await get_elevenlabs_signed_url()
+
+        # Connect to ElevenLabs WebSocket
+        elevenlabs_ws = await websockets.connect(
+            signed_url,
+            ping_interval=20,
+            ping_timeout=10,
+            ssl=ssl.create_default_context(cafile=certifi.where())
+        )
+
+        log(f"[ElevenLabs] Connected to Conversational AI for call {call_sid}")
+
+        async def receive_from_twilio():
+            """Receive audio from Twilio and forward to ElevenLabs"""
+            nonlocal stream_sid
+
+            try:
+                async for message in websocket.iter_text():
+                    data = json.loads(message)
+
+                    if data['event'] == 'media':
+                        # Forward audio to ElevenLabs (already base64 μ-law from Twilio)
+                        audio_message = {
+                            "user_audio_chunk": data['media']['payload']
+                        }
+                        await elevenlabs_ws.send(json.dumps(audio_message))
+
+                    elif data['event'] == 'start':
+                        stream_sid = data['start']['streamSid']
+                        log(f"[Twilio] Stream started: {stream_sid}")
+
+                        # Send conversation initiation (optional - can override agent config)
+                        # For now, we rely on the agent config from ElevenLabs dashboard
+                        # Uncomment below to override:
+                        # init_message = {
+                        #     "type": "conversation_initiation_client_data",
+                        #     "conversation_config_override": {
+                        #         "agent": {
+                        #             "prompt": {"prompt": "custom prompt here"},
+                        #             "first_message": "greeting here"
+                        #         }
+                        #     }
+                        # }
+                        # await elevenlabs_ws.send(json.dumps(init_message))
+
+                    elif data['event'] == 'stop':
+                        log(f"[Twilio] Stream stopped: {stream_sid}")
+                        break
+
+            except WebSocketDisconnect:
+                log(f"[Twilio] WebSocket disconnected for {call_sid}")
+            except Exception as e:
+                log(f"[Twilio] Error receiving from Twilio: {e}")
+
+        async def receive_from_elevenlabs():
+            """Receive audio/events from ElevenLabs and forward to Twilio"""
+            try:
+                async for message in elevenlabs_ws:
+                    try:
+                        response = json.loads(message)
+                        event_type = response.get('type')
+
+                        if event_type == 'conversation_initiation_metadata':
+                            log(f"[ElevenLabs] Conversation initiated")
+
+                        elif event_type == 'audio':
+                            # ElevenLabs sends audio - forward to Twilio
+                            # Check both possible audio formats from API
+                            audio_base64 = None
+                            if response.get('audio_event', {}).get('audio_base_64'):
+                                audio_base64 = response['audio_event']['audio_base_64']
+                            elif response.get('audio', {}).get('chunk'):
+                                audio_base64 = response['audio']['chunk']
+
+                            if audio_base64 and stream_sid:
+                                twilio_message = {
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {
+                                        "payload": audio_base64
+                                    }
+                                }
+                                await websocket.send_text(json.dumps(twilio_message))
+
+                        elif event_type == 'interruption':
+                            # User interrupted agent - clear Twilio playback buffer
+                            if stream_sid:
+                                clear_message = {
+                                    "event": "clear",
+                                    "streamSid": stream_sid
+                                }
+                                await websocket.send_text(json.dumps(clear_message))
+                                log(f"[ElevenLabs] Interruption detected - cleared Twilio buffer")
+
+                        elif event_type == 'ping':
+                            # Respond to keepalive ping
+                            if response.get('ping_event', {}).get('event_id'):
+                                pong_message = {
+                                    "type": "pong",
+                                    "event_id": response['ping_event']['event_id']
+                                }
+                                await elevenlabs_ws.send(json.dumps(pong_message))
+
+                        elif event_type == 'user_transcript' or event_type == 'agent_transcript':
+                            # Log transcripts (can be saved to database)
+                            transcript_text = response.get('text', '')
+                            role = 'user' if event_type == 'user_transcript' else 'agent'
+                            log(f"[Transcript] {role}: {transcript_text}")
+
+                            # TODO: Save to database
+                            # session = SESSIONS.get(call_sid, {})
+                            # if session:
+                            #     save_transcript(session.get('call_id'), role, transcript_text)
+
+                        else:
+                            log(f"[ElevenLabs] Unhandled event type: {event_type}")
+
+                    except json.JSONDecodeError as e:
+                        log(f"[ElevenLabs] JSON decode error: {e}")
+                    except Exception as e:
+                        log(f"[ElevenLabs] Error processing message: {e}")
+
+            except websockets.exceptions.ConnectionClosed:
+                log(f"[ElevenLabs] WebSocket closed for {call_sid}")
+            except Exception as e:
+                log(f"[ElevenLabs] Error receiving from ElevenLabs: {e}")
+
+        # Run both streams concurrently
+        await asyncio.gather(
+            receive_from_twilio(),
+            receive_from_elevenlabs()
+        )
+
+    except Exception as e:
+        log(f"[ElevenLabs] Handler error for {call_sid}: {e}")
+        import traceback
+        log(f"[ElevenLabs] Traceback: {traceback.format_exc()}")
+
+    finally:
+        # Clean up WebSocket connection
+        if elevenlabs_ws:
+            try:
+                await elevenlabs_ws.close()
+                log(f"[ElevenLabs] WebSocket closed for {call_sid}")
+            except:
+                pass
+
+        log(f"[ElevenLabs] Handler complete for call {call_sid}")
+
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
-    """Handle Twilio Media Stream WebSocket"""
+    """Handle Twilio Media Stream WebSocket - Routes to ElevenLabs or OpenAI based on feature flag"""
     log("Media stream WebSocket connected")
     await websocket.accept()
+
+    # Feature flag routing: ElevenLabs Conversational AI vs OpenAI Realtime API
+    if USE_ELEVENLABS_CONVERSATIONAL_AI:
+        log("[ROUTING] Using ElevenLabs Conversational AI")
+
+        # Wait for first message to get call_sid
+        first_message = await websocket.receive_text()
+        data = json.loads(first_message)
+
+        call_sid = None
+        if data.get('event') == 'start':
+            call_sid = data['start'].get('customParameters', {}).get('CallSid') or data['start'].get('callSid')
+
+        if not call_sid:
+            log("[ERROR] No call_sid found in start message")
+            await websocket.close()
+            return
+
+        # Route to ElevenLabs handler (receives first message manually, so recreate iterator)
+        # We need to create a wrapper that yields the first message then continues
+        async def message_iterator():
+            yield first_message  # Re-yield the first message we already consumed
+            async for msg in websocket.iter_text():
+                yield msg
+
+        # Temporarily replace iter_text with our wrapper
+        original_iter_text = websocket.iter_text
+        websocket.iter_text = message_iterator
+
+        try:
+            await handle_media_stream_elevenlabs(websocket, call_sid)
+        finally:
+            websocket.iter_text = original_iter_text
+
+        return  # ElevenLabs handler complete
+
+    # Otherwise, use OpenAI Realtime API (existing implementation)
+    log("[ROUTING] Using OpenAI Realtime API + ElevenLabs TTS")
 
     call_sid = None
     stream_sid = None
