@@ -1971,6 +1971,9 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                         response = json.loads(message)
                         event_type = response.get('type')
 
+                        # DEBUG: Log all events to see what we're receiving
+                        log(f"[ElevenLabs DEBUG] Event type: {event_type}, Keys: {list(response.keys())}")
+
                         if event_type == 'conversation_initiation_metadata':
                             log(f"[ElevenLabs] Conversation initiated")
 
