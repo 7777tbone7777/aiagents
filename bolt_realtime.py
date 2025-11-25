@@ -2249,43 +2249,6 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             # Twilio closed, ignore
                             pass
 
-                    elif response['type'] == 'response.text.done':
-                        # Handle text-only responses (when using ElevenLabs for TTS)
-                        if USE_ELEVENLABS:
-                            text = response.get('text', '')
-                            if text:
-                                log(f"[ElevenLabs] Got text response: {text}")
-
-                                # Save transcript
-                                if call_sid:
-                                    update_call_transcript(call_sid, "assistant", text)
-                                    log(f"Assistant: {text}")
-
-                                try:
-                                    # Generate audio with ElevenLabs (already in μ-law format!)
-                                    log("[ElevenLabs] Generating TTS...")
-                                    mulaw_audio = await elevenlabs_tts_async(text)
-
-                                    if mulaw_audio:
-                                        # Send audio directly to Twilio (no conversion needed!)
-                                        audio_message = {
-                                            "event": "media",
-                                            "streamSid": stream_sid,
-                                            "media": {"payload": mulaw_audio}
-                                        }
-                                        await websocket.send_json(audio_message)
-                                        log(f"[Audio] Sent μ-law audio to Twilio ({len(mulaw_audio)} chars base64)")
-
-                                        # Send mark event to signal audio completion
-                                        await send_mark(websocket, stream_sid)
-                                    else:
-                                        log("[ERROR] Failed to generate ElevenLabs audio")
-
-                                except Exception as e:
-                                    log(f"[ERROR] ElevenLabs TTS pipeline failed: {e}")
-                                    if SENTRY_AVAILABLE and SENTRY_DSN:
-                                        sentry_sdk.capture_exception(e)
-
                     elif response['type'] == 'response.audio_transcript.done':
                         # Log assistant response (OpenAI audio mode only)
                         if not USE_ELEVENLABS:
