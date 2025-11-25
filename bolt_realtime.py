@@ -2276,6 +2276,11 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             if session:
                                 extract_customer_info(transcript, session, is_user_speech=True)
 
+                            # In text-only mode (ElevenLabs), manually trigger response after user speech
+                            if USE_ELEVENLABS:
+                                log("[ElevenLabs] Triggering response after user speech")
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+
                     elif response['type'] == 'input_audio_buffer.speech_started':
                         log("Speech started - handling interruption")
                         await handle_speech_started_event()
