@@ -41,6 +41,16 @@ except ImportError:
     ELEVENLABS_AVAILABLE = False
     print("[WARN] ElevenLabs not installed. Run: pip install elevenlabs")
 
+# Audio processing for format conversion
+try:
+    from pydub import AudioSegment
+    from io import BytesIO
+    import audioop
+    AUDIO_CONVERSION_AVAILABLE = True
+except ImportError:
+    AUDIO_CONVERSION_AVAILABLE = False
+    print("[WARN] Audio conversion libraries not installed. Run: pip install pydub")
+
 # Google Calendar imports
 try:
     from google.oauth2 import service_account
@@ -346,6 +356,45 @@ async def elevenlabs_tts_async(text: str) -> bytes:
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, elevenlabs_tts_sync, text)
+
+def convert_mp3_to_mulaw(mp3_bytes: bytes) -> bytes:
+    """
+    Convert MP3 audio to G.711 μ-law format (8kHz, mono) for Twilio.
+    Returns: base64-encoded μ-law audio bytes
+    """
+    if not AUDIO_CONVERSION_AVAILABLE:
+        log("[ERROR] Audio conversion not available - pydub not installed")
+        return None
+
+    try:
+        # Load MP3 from bytes
+        audio = AudioSegment.from_mp3(BytesIO(mp3_bytes))
+
+        # Convert to 8kHz mono (Twilio requirement)
+        audio = audio.set_frame_rate(8000).set_channels(1)
+
+        # Export as WAV PCM 16-bit
+        wav_buffer = BytesIO()
+        audio.export(wav_buffer, format="wav")
+        wav_bytes = wav_buffer.getvalue()
+
+        # Extract raw PCM data (skip WAV header - 44 bytes)
+        pcm_data = wav_bytes[44:]
+
+        # Convert PCM16 to μ-law
+        mulaw_data = audioop.lin2ulaw(pcm_data, 2)  # 2 = 16-bit samples
+
+        # Base64 encode for Twilio
+        encoded_audio = base64.b64encode(mulaw_data).decode('utf-8')
+
+        log(f"[Audio] Converted {len(mp3_bytes)} bytes MP3 → {len(mulaw_data)} bytes μ-law")
+        return encoded_audio
+
+    except Exception as e:
+        log(f"[ERROR] Audio conversion failed: {e}")
+        if SENTRY_AVAILABLE and SENTRY_DSN:
+            sentry_sdk.capture_exception(e)
+        return None
 
 # ======================== Database ========================
 def get_business_for_phone(phone):
@@ -2040,24 +2089,37 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
 
                         # Send session configuration
                         # Configure VAD to be less sensitive to prevent false interruptions
+                        session_config = {
+                            "model": MODEL,  # REQUIRED: Specify the Realtime API model
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "threshold": 0.7,  # Balanced: not too sensitive (0.8 missed speech), not too low (0.6 false interrupts) (default 0.5)
+                                "prefix_padding_ms": 300,  # Audio before speech (default 300ms)
+                                "silence_duration_ms": 1200  # Longer silence before turn ends
+                            },
+                            "input_audio_format": "g711_ulaw",
+                            "instructions": system_message,
+                            "temperature": TEMPERATURE,
+                            "input_audio_transcription": {"model": "whisper-1"},  # Enable user speech transcription
+                        }
+
+                        # Configure modalities based on TTS provider
+                        if USE_ELEVENLABS:
+                            # Text-only mode: OpenAI handles conversation, ElevenLabs handles TTS
+                            session_config["modalities"] = ["text"]
+                            log("[ElevenLabs] Using text-only mode with ElevenLabs TTS")
+                        else:
+                            # Full audio mode: OpenAI handles both conversation and TTS
+                            session_config["modalities"] = ["text", "audio"]
+                            session_config["output_audio_format"] = "g711_ulaw"
+                            session_config["voice"] = VOICE
+                            log(f"[OpenAI] Using audio mode with OpenAI voice: {VOICE}")
+
                         session_update = {
                             "type": "session.update",
-                            "session": {
-                                "model": MODEL,  # REQUIRED: Specify the Realtime API model
-                                "turn_detection": {
-                                    "type": "server_vad",
-                                    "threshold": 0.7,  # Balanced: not too sensitive (0.8 missed speech), not too low (0.6 false interrupts) (default 0.5)
-                                    "prefix_padding_ms": 300,  # Audio before speech (default 300ms)
-                                    "silence_duration_ms": 1200  # Longer silence before turn ends
-                                },
-                                "input_audio_format": "g711_ulaw",
-                                "output_audio_format": "g711_ulaw",
-                                "voice": VOICE,
-                                "instructions": system_message,
-                                "modalities": ["text", "audio"],
-                                "temperature": TEMPERATURE,
-                                "input_audio_transcription": {"model": "whisper-1"},  # Enable user speech transcription
-                                "tools": [
+                            "session": session_config
+                        }
+                        session_update["session"]["tools"] = [
                                     {
                                         "type": "function",
                                         "name": "get_available_slots",
@@ -2149,7 +2211,8 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                     elif response['type'] == 'conversation.item.input_audio_transcription.failed':
                         log(f"[DEBUG] Transcription failed: {json.dumps(response, indent=2)}")
 
-                    if response['type'] == 'response.audio.delta' and 'delta' in response:
+                    if response['type'] == 'response.audio.delta' and 'delta' in response and not USE_ELEVENLABS:
+                        # Only process OpenAI audio when NOT using ElevenLabs
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
                         audio_delta = {
                             "event": "media",
@@ -2185,19 +2248,64 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                             # Twilio closed, ignore
                             pass
 
+                    elif response['type'] == 'response.text.done':
+                        # Handle text-only responses (when using ElevenLabs for TTS)
+                        if USE_ELEVENLABS:
+                            text = response.get('text', '')
+                            if text:
+                                log(f"[ElevenLabs] Got text response: {text}")
+
+                                # Save transcript
+                                if call_sid:
+                                    update_call_transcript(call_sid, "assistant", text)
+                                    log(f"Assistant: {text}")
+
+                                try:
+                                    # Generate audio with ElevenLabs
+                                    log("[ElevenLabs] Generating TTS...")
+                                    mp3_audio = await elevenlabs_tts_async(text)
+
+                                    if mp3_audio:
+                                        # Convert MP3 to μ-law for Twilio
+                                        log("[Audio] Converting MP3 to μ-law...")
+                                        mulaw_audio = convert_mp3_to_mulaw(mp3_audio)
+
+                                        if mulaw_audio:
+                                            # Send audio to Twilio
+                                            audio_message = {
+                                                "event": "media",
+                                                "streamSid": stream_sid,
+                                                "media": {"payload": mulaw_audio}
+                                            }
+                                            await websocket.send_json(audio_message)
+                                            log(f"[Audio] Sent {len(mulaw_audio)} bytes to Twilio")
+
+                                            # Send mark event to signal audio completion
+                                            await send_mark(websocket, stream_sid)
+                                        else:
+                                            log("[ERROR] Failed to convert audio format")
+                                    else:
+                                        log("[ERROR] Failed to generate ElevenLabs audio")
+
+                                except Exception as e:
+                                    log(f"[ERROR] ElevenLabs TTS pipeline failed: {e}")
+                                    if SENTRY_AVAILABLE and SENTRY_DSN:
+                                        sentry_sdk.capture_exception(e)
+
                     elif response['type'] == 'response.audio_transcript.done':
-                        # Log assistant response
-                        transcript = response.get('transcript', '')
-                        if transcript and call_sid:
-                            update_call_transcript(call_sid, "assistant", transcript)
-                            log(f"Assistant: {transcript}")
-                            log(f"[AUDIO] Transcript complete. Audio chunks sent so far: {getattr(send_to_twilio, 'audio_chunk_count', 0)}")
+                        # Log assistant response (OpenAI audio mode only)
+                        if not USE_ELEVENLABS:
+                            transcript = response.get('transcript', '')
+                            if transcript and call_sid:
+                                update_call_transcript(call_sid, "assistant", transcript)
+                                log(f"Assistant: {transcript}")
+                                log(f"[AUDIO] Transcript complete. Audio chunks sent so far: {getattr(send_to_twilio, 'audio_chunk_count', 0)}")
 
-                            # DO NOT add delay here - it interrupts audio playback
-                            # The audio chunks are still streaming when transcript completes
+                                # DO NOT add delay here - it interrupts audio playback
+                                # The audio chunks are still streaming when transcript completes
 
-                            # DO NOT extract from assistant responses to avoid capturing AI's mistakes
-                            # Only extract from user speech
+                                # DO NOT extract from assistant responses to avoid capturing AI's mistakes
+                                # Only extract from user speech
 
                     elif response['type'] == 'conversation.item.input_audio_transcription.completed':
                         # Log user speech
