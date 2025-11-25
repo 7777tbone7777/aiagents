@@ -318,14 +318,14 @@ def elevenlabs_tts_sync(text: str) -> str:
         return None
 
     try:
-        # Initialize ElevenLabs client
+        # Initialize ElevenLabs client (v1.x API)
         client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
-        # Generate audio directly in μ-law format (no conversion needed!)
-        audio = client.generate(
+        # Generate audio directly in μ-law format using v1.x API
+        audio_generator = client.text_to_speech.convert(
+            voice_id=ELEVENLABS_VOICE_ID,
             text=text,
-            voice=ELEVENLABS_VOICE_ID,
-            model="eleven_turbo_v2_5",  # Fastest model for real-time
+            model_id="eleven_turbo_v2_5",  # Fastest model for real-time
             voice_settings=VoiceSettings(
                 stability=0.5,
                 similarity_boost=0.75,
@@ -335,8 +335,8 @@ def elevenlabs_tts_sync(text: str) -> str:
             output_format="ulaw_8000"  # Direct μ-law output for Twilio!
         )
 
-        # Collect audio bytes and base64 encode
-        audio_bytes = b"".join(audio) if hasattr(audio, '__iter__') else audio
+        # Collect audio bytes from generator and base64 encode
+        audio_bytes = b"".join(audio_generator)
         encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
 
         log(f"[ElevenLabs] Generated {len(audio_bytes)} bytes of μ-law audio")
