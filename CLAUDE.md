@@ -43,10 +43,116 @@ This file provides comprehensive guidance to Claude Code when working with the A
 - **Database**: Supabase (PostgreSQL)
 - **Voice**: Twilio Programmable Voice
 - **AI**: OpenAI Realtime API (`gpt-4o-realtime-preview-2024-10-01`)
+- **TTS**: ElevenLabs (premium voice synthesis) - NEW!
 - **Calendar**: Google Calendar API
 - **Email**: Resend (primary) or SMTP (fallback)
 - **Scheduler**: APScheduler (daily digests)
 - **Deployment**: Railway
+
+### ElevenLabs Premium Voice Integration
+
+**New as of Nov 2024**: The platform now supports ElevenLabs for premium, natural-sounding voice synthesis.
+
+#### How It Works
+
+The platform uses a **hybrid architecture**:
+1. **OpenAI Realtime API** - Handles conversation intelligence (understanding user speech, generating responses)
+2. **ElevenLabs** - Handles voice synthesis (text-to-speech only)
+
+This gives you the best of both worlds: OpenAI's powerful conversation AI + ElevenLabs' premium voice quality.
+
+#### Configuration
+
+**Environment Variables:**
+```bash
+ELEVENLABS_API_KEY=your_api_key_here
+ELEVENLABS_VOICE_ID=voice_id_here  # e.g., JBFqnCBsd6RMkjVDRZzb for George (British male)
+```
+
+**Voice Selection:**
+- Browse voices at: https://elevenlabs.io/app/voice-library
+- Copy voice ID from any voice (Default Voices or My Voices)
+- Update `ELEVENLABS_VOICE_ID` in Railway environment variables
+- Voice changes take effect on next deployment (no code changes needed!)
+
+#### Technical Implementation Details
+
+**CRITICAL: Text-Only Mode**
+When using ElevenLabs, the OpenAI Realtime API is configured for **text-only output**:
+```python
+session_config["modalities"] = ["text"]  # No audio output from OpenAI
+```
+
+**Why?** We only want OpenAI to generate text responses, then we send that text to ElevenLabs for voice synthesis.
+
+**CRITICAL: Manual Response Triggering**
+In text-only mode, you MUST manually trigger OpenAI responses after user speech:
+```python
+# After user transcription completes
+if USE_ELEVENLABS:
+    await openai_ws.send(json.dumps({"type": "response.create"}))
+```
+
+**Why?** The `server_vad` turn detection doesn't automatically trigger responses in text-only mode like it does in audio mode.
+
+**Event Handling:**
+- Listen for `response.done` events (NOT `response.text.done`)
+- Extract text from nested structure: `response['response']['output'][0]['content'][0]['text']`
+- Send text to ElevenLabs for TTS generation
+- Receive μ-law audio directly (no conversion needed!)
+
+#### Voice Settings
+
+Control speech characteristics in `elevenlabs_tts_sync()` function:
+
+```python
+client.text_to_speech.convert(
+    voice_id=ELEVENLABS_VOICE_ID,
+    text=text,
+    model_id="eleven_multilingual_v2",  # Model affects speed/quality
+    voice_settings=VoiceSettings(
+        stability=0.7,        # 0.0-1.0: Higher = more consistent, slower speech
+        similarity_boost=0.75, # 0.0-1.0: Higher = more similar to original voice
+        style=0.0,            # 0.0-1.0: Style exaggeration (keep at 0 for natural)
+        use_speaker_boost=True # Enhances clarity
+    ),
+    output_format="ulaw_8000"  # Direct μ-law for Twilio (no conversion!)
+)
+```
+
+**Model Options (affecting speed/latency):**
+- `eleven_turbo_v2_5` - Fastest, lowest latency (may sound rushed)
+- `eleven_multilingual_v2` - Balanced speed and quality ⭐ **RECOMMENDED**
+- `eleven_monolingual_v1` - Slowest, most deliberate speech
+
+**Adjusting Speech Speed:**
+1. **Increase stability** (0.7 → 0.8 or 0.9) for slower, more measured speech
+2. **Change model** to eleven_monolingual_v1 for most deliberate pacing
+3. **Add punctuation** in prompts (commas, periods) to add natural pauses
+
+#### Common Issues & Solutions
+
+**Issue 1: Call hangs up after first response**
+- **Cause:** Missing `response.create` trigger after user speech
+- **Fix:** Ensure `response.create` is sent after `conversation.item.input_audio_transcription.completed`
+
+**Issue 2: Responses repeated twice**
+- **Cause:** Both `response.done` and `response.text.done` handlers active
+- **Fix:** Only handle text extraction in `response.done` (remove `response.text.done` handler)
+
+**Issue 3: Voice ID not working**
+- **Cause:** Using Default Voice ID without proper access
+- **Fix:** Use voices from "My Voices" in ElevenLabs dashboard, or ensure paid plan for Default Voices
+
+**Issue 4: Speech too fast/slow**
+- **Fix:** Adjust `stability` setting (higher = slower) and/or change model
+
+#### Performance Notes
+
+- **Latency:** ~200-400ms for ElevenLabs TTS generation (acceptable for phone calls)
+- **Audio Quality:** Significantly better than OpenAI's built-in voices
+- **Cost:** ElevenLabs charges per character (check your plan limits)
+- **Format:** Direct μ-law output eliminates need for audio conversion (faster!)
 
 ### Database Schema
 
@@ -299,13 +405,19 @@ PUBLIC_BASE_URL=https://xxx.ngrok.app   # Override auto-detection
 RAILWAY_PUBLIC_DOMAIN=xxx.railway.app   # Set by Railway automatically
 ```
 
-#### ElevenLabs TTS (app.py, ag.py - optional)
+#### ElevenLabs Premium TTS (bolt_realtime.py - RECOMMENDED)
 
 ```bash
-ELEVENLABS_API_KEY=eleven_xxx
-ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM  # Rachel voice
+ELEVENLABS_API_KEY=your_api_key              # Get from elevenlabs.io
+ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb     # Voice ID (e.g., George - British male)
 ```
-*Note: bolt_realtime.py uses OpenAI Realtime API's built-in TTS, so ElevenLabs not needed.*
+
+**Notes:**
+- When both variables are set, ElevenLabs is automatically enabled
+- Provides significantly better voice quality than OpenAI's built-in voices
+- Browse voices at: https://elevenlabs.io/app/voice-library
+- Voice ID can be changed in Railway without code changes
+- Also supported in app.py and ag.py for older versions
 
 ---
 
