@@ -2068,10 +2068,18 @@ async def handle_media_stream(websocket: WebSocket):
 
         call_sid = None
         if data.get('event') == 'start':
-            call_sid = data['start'].get('customParameters', {}).get('CallSid') or data['start'].get('callSid')
+            # Try multiple possible locations for call_sid
+            start_data = data.get('start', {})
+            call_sid = (
+                start_data.get('callSid') or
+                start_data.get('customParameters', {}).get('CallSid') or
+                start_data.get('customParameters', {}).get('callSid')
+            )
+            log(f"[DEBUG] Start message received: {json.dumps(data, indent=2)}")
+            log(f"[DEBUG] Extracted call_sid: {call_sid}")
 
         if not call_sid:
-            log("[ERROR] No call_sid found in start message")
+            log(f"[ERROR] No call_sid found in start message. Data: {json.dumps(data)}")
             await websocket.close()
             return
 
