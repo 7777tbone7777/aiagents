@@ -40,6 +40,3 @@ elevenlabs==0.2.27
 
 # OpenAI API (for Realtime API support)
 openai==1.12.0
-
-# Audio processing (for format conversion)
-pydub==0.25.1

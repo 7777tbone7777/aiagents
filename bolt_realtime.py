@@ -41,15 +41,8 @@ except ImportError:
     ELEVENLABS_AVAILABLE = False
     print("[WARN] ElevenLabs not installed. Run: pip install elevenlabs")
 
-# Audio processing for format conversion
-try:
-    from pydub import AudioSegment
-    from io import BytesIO
-    import audioop
-    AUDIO_CONVERSION_AVAILABLE = True
-except ImportError:
-    AUDIO_CONVERSION_AVAILABLE = False
-    print("[WARN] Audio conversion libraries not installed. Run: pip install pydub")
+# Audio processing (base64 encoding)
+from io import BytesIO
 
 # Google Calendar imports
 try:
@@ -315,19 +308,22 @@ async def ws_heartbeat(websocket, interval=20):
         log("[INFO] Heartbeat cancelled")
 
 # ======================== ElevenLabs Integration ========================
-def elevenlabs_tts_sync(text: str) -> bytes:
+def elevenlabs_tts_sync(text: str) -> str:
     """
-    Generate audio using ElevenLabs (synchronous version).
-    Falls back to None if ElevenLabs fails.
+    Generate audio using ElevenLabs in μ-law format (ready for Twilio).
 
     Returns:
-        Audio bytes (mp3) or None
+        Base64-encoded μ-law audio string, or None if failed
     """
     if not USE_ELEVENLABS:
         return None
 
     try:
-        audio = generate(
+        # Initialize ElevenLabs client
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+
+        # Generate audio directly in μ-law format (no conversion needed!)
+        audio = client.generate(
             text=text,
             voice=ELEVENLABS_VOICE_ID,
             model="eleven_turbo_v2_5",  # Fastest model for real-time
@@ -336,13 +332,16 @@ def elevenlabs_tts_sync(text: str) -> bytes:
                 similarity_boost=0.75,
                 style=0.0,
                 use_speaker_boost=True
-            )
+            ),
+            output_format="ulaw_8000"  # Direct μ-law output for Twilio!
         )
 
-        # Convert generator to bytes
+        # Collect audio bytes and base64 encode
         audio_bytes = b"".join(audio) if hasattr(audio, '__iter__') else audio
-        log(f"[ElevenLabs] Generated {len(audio_bytes)} bytes of audio")
-        return audio_bytes
+        encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+
+        log(f"[ElevenLabs] Generated {len(audio_bytes)} bytes of μ-law audio")
+        return encoded_audio
 
     except Exception as e:
         log(f"[ERROR] ElevenLabs TTS failed: {e}")
@@ -350,51 +349,13 @@ def elevenlabs_tts_sync(text: str) -> bytes:
             sentry_sdk.capture_exception(e)
         return None
 
-async def elevenlabs_tts_async(text: str) -> bytes:
+async def elevenlabs_tts_async(text: str) -> str:
     """
     Async wrapper for ElevenLabs TTS (runs in thread pool to avoid blocking).
+    Returns base64-encoded μ-law audio string.
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, elevenlabs_tts_sync, text)
-
-def convert_mp3_to_mulaw(mp3_bytes: bytes) -> bytes:
-    """
-    Convert MP3 audio to G.711 μ-law format (8kHz, mono) for Twilio.
-    Returns: base64-encoded μ-law audio bytes
-    """
-    if not AUDIO_CONVERSION_AVAILABLE:
-        log("[ERROR] Audio conversion not available - pydub not installed")
-        return None
-
-    try:
-        # Load MP3 from bytes
-        audio = AudioSegment.from_mp3(BytesIO(mp3_bytes))
-
-        # Convert to 8kHz mono (Twilio requirement)
-        audio = audio.set_frame_rate(8000).set_channels(1)
-
-        # Export as WAV PCM 16-bit
-        wav_buffer = BytesIO()
-        audio.export(wav_buffer, format="wav")
-        wav_bytes = wav_buffer.getvalue()
-
-        # Extract raw PCM data (skip WAV header - 44 bytes)
-        pcm_data = wav_bytes[44:]
-
-        # Convert PCM16 to μ-law
-        mulaw_data = audioop.lin2ulaw(pcm_data, 2)  # 2 = 16-bit samples
-
-        # Base64 encode for Twilio
-        encoded_audio = base64.b64encode(mulaw_data).decode('utf-8')
-
-        log(f"[Audio] Converted {len(mp3_bytes)} bytes MP3 → {len(mulaw_data)} bytes μ-law")
-        return encoded_audio
-
-    except Exception as e:
-        log(f"[ERROR] Audio conversion failed: {e}")
-        if SENTRY_AVAILABLE and SENTRY_DSN:
-            sentry_sdk.capture_exception(e)
-        return None
 
 # ======================== Database ========================
 def get_business_for_phone(phone):
@@ -2260,29 +2221,22 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                     log(f"Assistant: {text}")
 
                                 try:
-                                    # Generate audio with ElevenLabs
+                                    # Generate audio with ElevenLabs (already in μ-law format!)
                                     log("[ElevenLabs] Generating TTS...")
-                                    mp3_audio = await elevenlabs_tts_async(text)
+                                    mulaw_audio = await elevenlabs_tts_async(text)
 
-                                    if mp3_audio:
-                                        # Convert MP3 to μ-law for Twilio
-                                        log("[Audio] Converting MP3 to μ-law...")
-                                        mulaw_audio = convert_mp3_to_mulaw(mp3_audio)
+                                    if mulaw_audio:
+                                        # Send audio directly to Twilio (no conversion needed!)
+                                        audio_message = {
+                                            "event": "media",
+                                            "streamSid": stream_sid,
+                                            "media": {"payload": mulaw_audio}
+                                        }
+                                        await websocket.send_json(audio_message)
+                                        log(f"[Audio] Sent μ-law audio to Twilio ({len(mulaw_audio)} chars base64)")
 
-                                        if mulaw_audio:
-                                            # Send audio to Twilio
-                                            audio_message = {
-                                                "event": "media",
-                                                "streamSid": stream_sid,
-                                                "media": {"payload": mulaw_audio}
-                                            }
-                                            await websocket.send_json(audio_message)
-                                            log(f"[Audio] Sent {len(mulaw_audio)} bytes to Twilio")
-
-                                            # Send mark event to signal audio completion
-                                            await send_mark(websocket, stream_sid)
-                                        else:
-                                            log("[ERROR] Failed to convert audio format")
+                                        # Send mark event to signal audio completion
+                                        await send_mark(websocket, stream_sid)
                                     else:
                                         log("[ERROR] Failed to generate ElevenLabs audio")
 
