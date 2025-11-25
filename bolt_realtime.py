@@ -2012,6 +2012,20 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                                 }
                                 await elevenlabs_ws.send(json.dumps(pong_message))
 
+                        elif event_type == 'agent_response':
+                            # Agent response with audio - extract and forward to Twilio
+                            audio_base64 = response.get('audio', {}).get('chunk') or response.get('audio_base_64')
+                            if audio_base64 and stream_sid:
+                                twilio_message = {
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {
+                                        "payload": audio_base64
+                                    }
+                                }
+                                await websocket.send_text(json.dumps(twilio_message))
+                                log(f"[ElevenLabs] Forwarded agent audio to Twilio")
+
                         elif event_type == 'user_transcript' or event_type == 'agent_transcript':
                             # Log transcripts (can be saved to database)
                             transcript_text = response.get('text', '')
