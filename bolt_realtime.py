@@ -1916,6 +1916,22 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
 
         log(f"[ElevenLabs] Connected to Conversational AI")
 
+        # Send initial configuration to ElevenLabs
+        # This tells ElevenLabs what agent config to use and ensures proper audio format
+        initial_config = {
+            "type": "conversation_initiation_client_data",
+            "conversation_config_override": {
+                "agent": {
+                    "prompt": {
+                        "prompt": "You are a helpful AI assistant for Bolt AI Group. Keep responses brief and conversational."
+                    },
+                    "first_message": "Hello! Thanks for calling. How can I help you today?"
+                }
+            }
+        }
+        await elevenlabs_ws.send(json.dumps(initial_config))
+        log(f"[ElevenLabs] Sent initial configuration")
+
         async def receive_from_twilio():
             """Receive audio from Twilio and forward to ElevenLabs"""
             nonlocal stream_sid, call_sid
