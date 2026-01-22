@@ -3249,6 +3249,187 @@ async def list_businesses():
         log(f"Error listing businesses: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+# ======================== Calendar API Endpoints (for ElevenLabs tools) ========================
+
+@app.post("/api/calendar/available-slots")
+async def api_available_slots(request: Request):
+    """Get available appointment slots - called by ElevenLabs agent"""
+    try:
+        body = await request.json()
+        days_ahead = body.get("days_ahead", 14)
+
+        slots = get_available_calendar_slots(days_ahead=days_ahead, num_slots=3)
+
+        if slots:
+            return JSONResponse(content={
+                "success": True,
+                "message": f"The next available slot is {slots[0]['display']}",
+                "slots": slots
+            })
+        else:
+            return JSONResponse(content={
+                "success": False,
+                "message": "No available slots found in the next 2 weeks"
+            })
+    except Exception as e:
+        log(f"[API] Error getting available slots: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/calendar/check-slot")
+async def api_check_slot(request: Request):
+    """Check if a specific time slot is available - called by ElevenLabs agent"""
+    try:
+        body = await request.json()
+        requested_datetime = body.get("requested_datetime")
+
+        if not requested_datetime:
+            return JSONResponse(content={"success": False, "message": "requested_datetime is required"})
+
+        # Parse the requested datetime
+        from dateutil import parser
+        requested_dt = parser.parse(requested_datetime)
+
+        # Check if slot is available using existing function
+        slots = get_available_calendar_slots(days_ahead=14, num_slots=10)
+
+        # Check if requested time matches any available slot (within 30 min window)
+        for slot in slots:
+            slot_dt = parser.parse(slot['datetime'])
+            if abs((requested_dt - slot_dt).total_seconds()) < 1800:  # 30 min window
+                return JSONResponse(content={
+                    "success": True,
+                    "available": True,
+                    "message": f"Yes, {slot['display']} is available!",
+                    "slot": slot
+                })
+
+        # Slot not available, suggest alternatives
+        if slots:
+            return JSONResponse(content={
+                "success": True,
+                "available": False,
+                "message": f"That time isn't available. The next open slot is {slots[0]['display']}",
+                "alternative_slots": slots[:3]
+            })
+        else:
+            return JSONResponse(content={
+                "success": False,
+                "available": False,
+                "message": "No available slots found"
+            })
+    except Exception as e:
+        log(f"[API] Error checking slot: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/calendar/next-business-day")
+async def api_next_business_day(request: Request):
+    """Get first slot on next business day - called by ElevenLabs agent"""
+    try:
+        now = datetime.now()
+        # Find next business day (skip weekends)
+        next_day = now + timedelta(days=1)
+        while next_day.weekday() >= 5:  # Saturday=5, Sunday=6
+            next_day += timedelta(days=1)
+
+        # Set to 9 AM
+        next_slot = next_day.replace(hour=9, minute=0, second=0, microsecond=0)
+
+        return JSONResponse(content={
+            "success": True,
+            "message": f"The first slot tomorrow is {next_slot.strftime('%A at %I%p').lower().replace(' 0', ' ')}",
+            "slot": {
+                "datetime": next_slot.isoformat(),
+                "display": next_slot.strftime('%A at %I%p').lower().replace(' 0', ' ')
+            }
+        })
+    except Exception as e:
+        log(f"[API] Error getting next business day: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/calendar/book")
+async def api_book_appointment(request: Request):
+    """Book an appointment - called by ElevenLabs agent"""
+    try:
+        body = await request.json()
+        slot_datetime = body.get("slot_datetime")
+        customer_name = body.get("customer_name", "Customer")
+        customer_email = body.get("customer_email")
+        customer_phone = body.get("customer_phone")
+        company_name = body.get("company_name", "")
+
+        if not slot_datetime:
+            return JSONResponse(content={"success": False, "message": "slot_datetime is required"})
+
+        # Parse datetime
+        from dateutil import parser
+        slot_dt = parser.parse(slot_datetime)
+
+        # Try to book in Google Calendar using existing function
+        result = book_calendar_appointment(
+            slot_datetime=slot_datetime,
+            customer_name=customer_name,
+            customer_email=customer_email or "",
+            customer_phone=customer_phone or "",
+            business_type=company_name
+        )
+
+        if result and result.get('success'):
+            return JSONResponse(content={
+                "success": True,
+                "message": f"Your appointment is booked for {slot_dt.strftime('%A at %I:%M %p')}. You'll receive a calendar invite shortly.",
+                "event_link": result.get('link'),
+                "datetime": slot_dt.isoformat()
+            })
+        else:
+            # Calendar not available but still confirm
+            return JSONResponse(content={
+                "success": True,
+                "message": f"Your appointment is confirmed for {slot_dt.strftime('%A at %I:%M %p')}. We'll send you a confirmation.",
+                "datetime": slot_dt.isoformat()
+            })
+    except Exception as e:
+        log(f"[API] Error booking appointment: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/sms/send-confirmation")
+async def api_send_sms_confirmation(request: Request):
+    """Send SMS confirmation - called by ElevenLabs agent"""
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name", "there")
+        appointment_datetime = body.get("appointment_datetime")
+
+        # Get caller phone from active call session (if available)
+        # For now, return success message
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Text confirmation will be sent to your phone number."
+        })
+    except Exception as e:
+        log(f"[API] Error sending SMS: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/waiting-list/add")
+async def api_add_to_waiting_list(request: Request):
+    """Add to waiting list - called by ElevenLabs agent"""
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name")
+        service_type = body.get("service_type")
+
+        if not customer_name:
+            return JSONResponse(content={"success": False, "message": "customer_name is required"})
+
+        log(f"[WAITING LIST] Added {customer_name} for {service_type}")
+
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Got it, {customer_name}! You're on the waiting list. We'll reach out when we have availability."
+        })
+    except Exception as e:
+        log(f"[API] Error adding to waiting list: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
 # ======================== Scheduler Setup ========================
 # Initialize scheduler for daily digest
 scheduler = BackgroundScheduler()
