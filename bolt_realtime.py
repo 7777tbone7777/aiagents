@@ -541,9 +541,20 @@ def send_email(to_email, subject, body_html, max_retries=3):
 
 def send_instant_call_alert(call_sid, caller_phone, call_start_time):
     """Send instant email alert when a call comes in"""
+    import pytz
     subject = f"🔔 Incoming Call Alert - {caller_phone}"
 
-    call_time_formatted = call_start_time.strftime("%I:%M %p") if isinstance(call_start_time, datetime) else str(call_start_time)
+    # Convert to PST for display
+    if isinstance(call_start_time, datetime):
+        pacific = pytz.timezone('America/Los_Angeles')
+        if call_start_time.tzinfo is None:
+            # Assume UTC if naive datetime (Railway runs in UTC)
+            utc = pytz.UTC
+            call_start_time = utc.localize(call_start_time)
+        call_time_pst = call_start_time.astimezone(pacific)
+        call_time_formatted = call_time_pst.strftime("%I:%M %p")
+    else:
+        call_time_formatted = str(call_start_time)
 
     body_html = f"""
     <html>
