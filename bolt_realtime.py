@@ -64,7 +64,7 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
 
 # Debug logging
 if SUPABASE_URL:
@@ -197,6 +197,7 @@ else:
 app = FastAPI()
 SUPABASE = None  # Lazy-initialized on first use
 SESSIONS = {}  # call_sid -> session data
+SERVER_START_TIME = time.time()  # Track uptime
 CALL_METRICS = defaultdict(lambda: {
     "total_calls": 0,
     "successful_calls": 0,
@@ -369,36 +370,51 @@ async def elevenlabs_tts_async(text: str) -> str:
     return await loop.run_in_executor(None, elevenlabs_tts_sync, text)
 
 # ======================== Database ========================
-def get_business_for_phone(phone):
-    """Look up business by phone number"""
-    # TEMPORARY WORKAROUND: If Supabase fails, use fallback config for known numbers
-    FALLBACK_CONFIGS = {
-        "+18555287028": {
-            "id": "78e2ea0f-f34b-4459-9d5b-6e32d946db13",
-            "business_name": "Bolt AI Group",
-            "owner_name": "Anthony Vazquez",
-            "owner_email": "scarfaceforward@gmail.com",
-            "industry": "sales",
-            "agent_name": "Bolt",
-            "capabilities": ["appointments"],
-            "google_calendar_id": "scarfaceforward@gmail.com",
-            "plan": "internal",
-            "status": "active"
-        }
+
+# Fallback business config from environment (used only if database is unavailable)
+# This ensures calls can still be answered even during brief DB outages
+FALLBACK_BUSINESS_ID = os.getenv("FALLBACK_BUSINESS_ID")
+FALLBACK_BUSINESS_NAME = os.getenv("FALLBACK_BUSINESS_NAME", "AI Receptionist")
+FALLBACK_OWNER_EMAIL = os.getenv("FALLBACK_OWNER_EMAIL")
+FALLBACK_AGENT_NAME = os.getenv("FALLBACK_AGENT_NAME", "Alex")
+FALLBACK_PHONE = os.getenv("FALLBACK_PHONE")
+
+def get_fallback_config():
+    """Build fallback config from environment variables (or return None if not configured)"""
+    if not FALLBACK_BUSINESS_ID or not FALLBACK_PHONE:
+        return None
+    return {
+        "id": FALLBACK_BUSINESS_ID,
+        "business_name": FALLBACK_BUSINESS_NAME,
+        "owner_email": FALLBACK_OWNER_EMAIL,
+        "industry": "general",
+        "agent_name": FALLBACK_AGENT_NAME,
+        "capabilities": ["appointments"],
+        "plan": "internal",
+        "status": "active"
     }
 
+def get_business_for_phone(phone):
+    """Look up business by phone number from database"""
     supabase = get_supabase_client()
     if not supabase:
-        log(f"[WARN] SUPABASE client is None - using fallback config")
-        return FALLBACK_CONFIGS.get(phone)
+        log(f"[WARN] SUPABASE client is None")
+        if FALLBACK_PHONE and phone == FALLBACK_PHONE:
+            log(f"[WARN] Using env-based fallback config for {phone}")
+            return get_fallback_config()
+        return None
 
     try:
         log(f"[DEBUG] Querying phone_numbers table for: {phone}")
         result = supabase.table('phone_numbers').select('business_id').eq('phone_number', phone).execute()
         log(f"[DEBUG] Phone lookup result: {result.data}")
         if not result.data:
-            log(f"[WARN] No database record - trying fallback config")
-            return FALLBACK_CONFIGS.get(phone)
+            log(f"[WARN] Phone {phone} not found in database")
+            # Try fallback only for configured phone
+            if FALLBACK_PHONE and phone == FALLBACK_PHONE:
+                log(f"[WARN] Using env-based fallback config")
+                return get_fallback_config()
+            return None
         business_id = result.data[0]['business_id']
         log(f"[DEBUG] Found business_id: {business_id}, fetching business details...")
         biz_result = supabase.table('businesses').select('*').eq('id', business_id).execute()
@@ -407,9 +423,11 @@ def get_business_for_phone(phone):
     except Exception as e:
         import traceback
         log(f"[ERROR] Database error in get_business_for_phone: {e}")
-        log(f"[WARN] Using fallback config due to database error")
-        # Fall back to hardcoded config
-        return FALLBACK_CONFIGS.get(phone)
+        # Try fallback only for configured phone during DB errors
+        if FALLBACK_PHONE and phone == FALLBACK_PHONE:
+            log(f"[WARN] Using env-based fallback config due to DB error")
+            return get_fallback_config()
+        return None
 
 def create_call_record(business_id, from_number, call_sid, to_number):
     """Create a call record in the database"""
@@ -1742,7 +1760,31 @@ async def index_page():
 
 @app.get("/health", response_class=JSONResponse)
 async def health_check():
-    return {"status": "ok"}
+    """Simple health check for uptime monitoring services like UptimeRobot."""
+    uptime_seconds = int(time.time() - SERVER_START_TIME)
+    uptime_hours = uptime_seconds // 3600
+    uptime_minutes = (uptime_seconds % 3600) // 60
+
+    # Check critical services
+    supabase_ok = get_supabase_client() is not None
+    openai_ok = bool(OPENAI_API_KEY)
+
+    # Determine overall status
+    if supabase_ok and openai_ok:
+        status = "healthy"
+    else:
+        status = "degraded"
+
+    return {
+        "status": status,
+        "uptime": f"{uptime_hours}h {uptime_minutes}m",
+        "uptime_seconds": uptime_seconds,
+        "active_calls": len(SESSIONS),
+        "services": {
+            "database": "ok" if supabase_ok else "error",
+            "openai": "ok" if openai_ok else "error"
+        }
+    }
 
 @app.get("/monitor", response_class=JSONResponse)
 async def monitoring_dashboard():
@@ -1810,6 +1852,7 @@ async def monitoring_dashboard():
         }
 
 @app.api_route("/inbound", methods=["GET", "POST"])
+@app.api_route("/voice/incoming", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     """Handle inbound call - start Media Stream"""
     form = await request.form()
@@ -1854,9 +1897,21 @@ async def handle_incoming_call(request: Request):
     log(f"Sending instant call alert for {from_number}")
     send_instant_call_alert(call_sid, from_number, call_start_time)
 
+    # Start call recording via REST API (for Media Streams, we can't use TwiML record)
+    # This starts recording immediately when the call is answered
+    host = request.url.hostname
+    try:
+        recording = TWILIO_CLIENT.calls(call_sid).recordings.create(
+            recording_status_callback=f'https://{host}/recording-status',
+            recording_status_callback_method='POST',
+            recording_channels='dual'  # Records both legs separately for better quality
+        )
+        log(f"Started recording for call {call_sid}: {recording.sid}")
+    except Exception as e:
+        log(f"Failed to start recording for call {call_sid}: {e}")
+
     # Start Media Stream
     response = VoiceResponse()
-    host = request.url.hostname
     connect = Connect()
     connect.stream(url=f'wss://{host}/media-stream')
     response.append(connect)
@@ -1901,6 +1956,7 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
     stream_sid = None
     call_sid = None
     elevenlabs_ws = None
+    elevenlabs_connected = True  # Track connection state to avoid sending to closed socket
 
     try:
         # Get signed URL for authentication
@@ -1922,10 +1978,14 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
 
         async def receive_from_twilio():
             """Receive audio from Twilio and forward to ElevenLabs"""
-            nonlocal stream_sid, call_sid
+            nonlocal stream_sid, call_sid, elevenlabs_connected
 
             try:
                 async for message in websocket.iter_text():
+                    # Skip if ElevenLabs connection is closed
+                    if not elevenlabs_connected:
+                        break
+
                     data = json.loads(message)
 
                     if data['event'] == 'connected':
@@ -1938,26 +1998,27 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                         log(f"[Twilio] Stream started: {stream_sid}, Call SID: {call_sid}")
 
                     elif data['event'] == 'media':
-                        # Convert audio from Twilio format (μ-law 8kHz) to ElevenLabs format (PCM16 16kHz)
+                        # Skip sending if ElevenLabs is disconnected
+                        if not elevenlabs_connected:
+                            continue
+
+                        # Send audio directly to ElevenLabs (agent is configured for ulaw_8000)
                         try:
-                            # Decode base64 μ-law audio from Twilio
-                            audio_ulaw = base64.b64decode(data['media']['payload'])
-
-                            # Convert μ-law to PCM16
-                            audio_pcm = audioop.ulaw2lin(audio_ulaw, 2)
-
-                            # Resample from 8kHz to 16kHz (upsample by 2)
-                            audio_16k = audioop.ratecv(audio_pcm, 2, 1, 8000, 16000, None)[0]
-
-                            # Re-encode to base64
-                            audio_base64 = base64.b64encode(audio_16k).decode('utf-8')
-
+                            # Send Twilio's mulaw audio directly - no conversion needed
                             audio_message = {
-                                "user_audio_chunk": audio_base64
+                                "user_audio_chunk": data['media']['payload']
                             }
                             await elevenlabs_ws.send(json.dumps(audio_message))
+                        except websockets.exceptions.ConnectionClosed:
+                            log(f"[ElevenLabs] Connection closed while sending audio")
+                            elevenlabs_connected = False
+                            break
                         except Exception as e:
-                            log(f"[ERROR] User audio conversion failed: {e}")
+                            log(f"[ERROR] User audio conversion/send failed: {e}")
+                            # Check if it's a connection error
+                            if "closed" in str(e).lower() or "1000" in str(e):
+                                elevenlabs_connected = False
+                                break
 
                         # Send conversation initiation (optional - can override agent config)
                         # For now, we rely on the agent config from ElevenLabs dashboard
@@ -1984,6 +2045,8 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
 
         async def receive_from_elevenlabs():
             """Receive audio/events from ElevenLabs and forward to Twilio"""
+            nonlocal elevenlabs_connected
+
             try:
                 async for message in elevenlabs_ws:
                     try:
@@ -2101,8 +2164,11 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
 
             except websockets.exceptions.ConnectionClosed:
                 log(f"[ElevenLabs] WebSocket closed for {call_sid}")
+                elevenlabs_connected = False
             except Exception as e:
                 log(f"[ElevenLabs] Error receiving from ElevenLabs: {e}")
+                if "closed" in str(e).lower() or "1000" in str(e):
+                    elevenlabs_connected = False
 
         # Run both streams concurrently
         await asyncio.gather(
@@ -2323,6 +2389,22 @@ STRICT RULES - DO NOT VIOLATE:
 - Always book implementation appointment before ending call
 - Be warm, friendly, and professional
 
+VOICEMAIL FALLBACK:
+If the caller says any of these:
+- "Can I leave a message?"
+- "I'd like to leave a voicemail"
+- "Can someone call me back?"
+- "I'll just leave my number"
+- Seems confused and wants to speak to a human
+
+Then:
+1. Call the take_message function
+2. Say "beep!" (the beep sound)
+3. Say "Please leave your message after the beep, and I'll make sure someone gets back to you."
+4. Listen to their complete message without interrupting
+5. When they finish, call save_voicemail with all the details they provided
+6. Thank them and confirm someone will call back
+
 Be conversational, empathetic, and efficient."""
                         else:
                             system_message = f"""You are {agent_name}, a helpful AI receptionist for {business_name}.
@@ -2332,6 +2414,14 @@ Your job is to:
 - Answer questions about the business
 - Help with appointments and inquiries
 - Provide excellent customer service
+
+VOICEMAIL OPTION:
+If the caller wants to leave a message, speak to a human, or you cannot help them:
+1. Call the take_message function
+2. Say "beep!" and "Please leave your message after the beep."
+3. Listen to their complete message
+4. Call save_voicemail with their message details
+5. Thank them and confirm someone will call back
 
 Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
 
@@ -2410,6 +2500,48 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                         }
                                     },
                                     "required": ["slot_datetime", "slot_display"]
+                                }
+                            },
+                            {
+                                "type": "function",
+                                "name": "take_message",
+                                "description": "Record a voicemail message from the caller. Call this when the caller wants to leave a message, or when you cannot help them with their request and they want someone to call them back. After calling this, say the beep sound 'beep!' and let them know they can leave their message.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "reason": {
+                                            "type": "string",
+                                            "description": "Brief reason for the voicemail (e.g., 'caller requested callback', 'after hours', 'complex inquiry')"
+                                        }
+                                    },
+                                    "required": ["reason"]
+                                }
+                            },
+                            {
+                                "type": "function",
+                                "name": "save_voicemail",
+                                "description": "Save the voicemail message content. Call this after the caller finishes leaving their message.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message_content": {
+                                            "type": "string",
+                                            "description": "The transcribed content of the caller's voicemail message"
+                                        },
+                                        "callback_number": {
+                                            "type": "string",
+                                            "description": "Phone number to call back (if provided by caller)"
+                                        },
+                                        "caller_name": {
+                                            "type": "string",
+                                            "description": "Name of the caller (if provided)"
+                                        },
+                                        "urgency": {
+                                            "type": "string",
+                                            "description": "Urgency level: 'urgent', 'normal', or 'low'"
+                                        }
+                                    },
+                                    "required": ["message_content"]
                                 }
                             }
                         ]
@@ -2640,6 +2772,54 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                     "message": "Missing required information for booking"
                                 }
 
+                        elif function_name == "take_message":
+                            reason = arguments.get('reason', 'caller requested')
+                            log(f"[VOICEMAIL] Starting voicemail mode - reason: {reason}")
+
+                            if session:
+                                session['voicemail_mode'] = True
+                                session['voicemail_reason'] = reason
+
+                            function_result = {
+                                "success": True,
+                                "message": "Voicemail mode activated. Say 'beep!' and prompt the caller to leave their message after the beep. Listen to their entire message, then call save_voicemail with the transcribed content."
+                            }
+
+                        elif function_name == "save_voicemail":
+                            message_content = arguments.get('message_content', '')
+                            callback_number = arguments.get('callback_number')
+                            caller_name = arguments.get('caller_name')
+                            urgency = arguments.get('urgency', 'normal')
+
+                            log(f"[VOICEMAIL] Saving voicemail - caller: {caller_name}, urgency: {urgency}")
+                            log(f"[VOICEMAIL] Message: {message_content[:100]}...")
+
+                            if session:
+                                session['voicemail_message'] = message_content
+                                session['voicemail_callback'] = callback_number
+                                session['voicemail_urgency'] = urgency
+                                if caller_name:
+                                    session['customer_name'] = caller_name
+
+                                # Save voicemail to database
+                                call_id = session.get('call_id')
+                                if call_id and SUPABASE:
+                                    try:
+                                        # Store as a transcript entry with type 'voicemail'
+                                        SUPABASE.table('call_transcripts').insert({
+                                            "call_id": call_id,
+                                            "role": "voicemail",
+                                            "content": f"[{urgency.upper()}] {caller_name or 'Unknown'} ({callback_number or session.get('caller_phone', 'No callback number')}): {message_content}"
+                                        }).execute()
+                                        log(f"[VOICEMAIL] Saved to database for call {call_id}")
+                                    except Exception as e:
+                                        log(f"[VOICEMAIL] Error saving to database: {e}")
+
+                            function_result = {
+                                "success": True,
+                                "message": f"Voicemail saved successfully. Thank the caller and let them know someone will get back to them soon."
+                            }
+
                         # Send function result back to OpenAI
                         if function_result is not None:
                             function_output = {
@@ -2834,6 +3014,43 @@ async def status_callback(request: Request):
 
     return JSONResponse(content={"status": "ok"})
 
+@app.post("/recording-status")
+async def recording_status_callback(request: Request):
+    """Handle recording status updates from Twilio"""
+    form = await request.form()
+
+    call_sid = form.get("CallSid")
+    recording_sid = form.get("RecordingSid")
+    recording_status = form.get("RecordingStatus")
+    recording_url = form.get("RecordingUrl")
+    recording_duration = form.get("RecordingDuration")
+
+    log(f"Recording status: {recording_sid} -> {recording_status} for call {call_sid}")
+
+    if recording_status == "completed" and recording_url:
+        # Add .mp3 extension for playable URL
+        recording_url_mp3 = f"{recording_url}.mp3"
+        log(f"Recording completed: {recording_url_mp3}")
+
+        # Update the call record in database with recording URL
+        if SUPABASE:
+            try:
+                # Find call by call_sid and update with recording info
+                result = SUPABASE.table('calls').update({
+                    'recording_url': recording_url_mp3,
+                    'recording_sid': recording_sid,
+                    'recording_duration': int(recording_duration) if recording_duration else None
+                }).eq('call_sid', call_sid).execute()
+
+                if result.data:
+                    log(f"Updated call {call_sid} with recording URL")
+                else:
+                    log(f"No call found with SID {call_sid} to update")
+            except Exception as e:
+                log(f"Error updating call with recording: {e}")
+
+    return JSONResponse(content={"status": "ok"})
+
 @app.get("/test-digest")
 async def test_daily_digest():
     """Manual trigger for testing the daily digest email"""
@@ -2870,6 +3087,178 @@ async def test_daily_digest():
             "status": "error",
             "message": f"Error: {str(e)}"
         })
+
+# ======================== Dashboard API Endpoints ========================
+# These endpoints power the client dashboard
+
+from fastapi.middleware.cors import CORSMiddleware
+
+# Add CORS for dashboard frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, restrict to dashboard domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/dashboard/stats/{business_id}")
+async def get_dashboard_stats(business_id: str):
+    """Get aggregate statistics for a business"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return JSONResponse(content={"error": "Database not configured"}, status_code=500)
+
+    try:
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = today_start.replace(day=1)
+
+        # Get all calls for this business
+        result = supabase.table('calls').select('*').eq('business_id', business_id).execute()
+        all_calls = result.data or []
+
+        # Filter by time periods
+        today_calls = [c for c in all_calls if c.get('created_at') and c['created_at'] >= today_start.isoformat()]
+        week_calls = [c for c in all_calls if c.get('created_at') and c['created_at'] >= week_start.isoformat()]
+        month_calls = [c for c in all_calls if c.get('created_at') and c['created_at'] >= month_start.isoformat()]
+
+        # Calculate stats
+        def calc_stats(calls):
+            total = len(calls)
+            completed = len([c for c in calls if c.get('status') == 'completed'])
+            failed = len([c for c in calls if c.get('status') in ['failed', 'busy', 'no-answer']])
+            total_duration = sum(int(c.get('duration', 0)) for c in calls if c.get('duration'))
+            avg_duration = total_duration / completed if completed > 0 else 0
+            return {
+                "total": total,
+                "completed": completed,
+                "failed": failed,
+                "in_progress": total - completed - failed,
+                "total_duration_seconds": total_duration,
+                "avg_duration_seconds": round(avg_duration, 1)
+            }
+
+        return JSONResponse(content={
+            "success": True,
+            "business_id": business_id,
+            "today": calc_stats(today_calls),
+            "this_week": calc_stats(week_calls),
+            "this_month": calc_stats(month_calls),
+            "all_time": calc_stats(all_calls)
+        })
+
+    except Exception as e:
+        log(f"Error getting dashboard stats: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/api/dashboard/calls/{business_id}")
+async def get_dashboard_calls(business_id: str, limit: int = 50, offset: int = 0):
+    """Get paginated list of calls for a business"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return JSONResponse(content={"error": "Database not configured"}, status_code=500)
+
+    try:
+        # Get calls with pagination, newest first
+        result = supabase.table('calls').select('*').eq('business_id', business_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+
+        # Get total count
+        count_result = supabase.table('calls').select('id', count='exact').eq('business_id', business_id).execute()
+        total_count = count_result.count if hasattr(count_result, 'count') else len(count_result.data or [])
+
+        return JSONResponse(content={
+            "success": True,
+            "calls": result.data or [],
+            "total": total_count,
+            "limit": limit,
+            "offset": offset
+        })
+
+    except Exception as e:
+        log(f"Error getting dashboard calls: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/api/dashboard/call/{call_id}")
+async def get_call_detail(call_id: str):
+    """Get detailed information about a single call including transcript"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return JSONResponse(content={"error": "Database not configured"}, status_code=500)
+
+    try:
+        # Get call record
+        call_result = supabase.table('calls').select('*').eq('id', call_id).execute()
+        if not call_result.data:
+            return JSONResponse(content={"error": "Call not found"}, status_code=404)
+
+        call = call_result.data[0]
+
+        # Get transcript for this call
+        transcript_result = supabase.table('call_transcripts').select('*').eq('call_id', call_id).order('created_at', desc=False).execute()
+
+        return JSONResponse(content={
+            "success": True,
+            "call": call,
+            "transcript": transcript_result.data or []
+        })
+
+    except Exception as e:
+        log(f"Error getting call detail: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/api/dashboard/business/{business_id}")
+async def get_business_settings(business_id: str):
+    """Get business configuration (read-only for dashboard)"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return JSONResponse(content={"error": "Database not configured"}, status_code=500)
+
+    try:
+        # Get business info
+        result = supabase.table('businesses').select('*').eq('id', business_id).execute()
+        if not result.data:
+            return JSONResponse(content={"error": "Business not found"}, status_code=404)
+
+        business = result.data[0]
+
+        # Get phone numbers for this business
+        phones_result = supabase.table('phone_numbers').select('*').eq('business_id', business_id).execute()
+
+        # Remove sensitive fields
+        safe_business = {k: v for k, v in business.items() if k not in ['dashboard_password_hash']}
+
+        return JSONResponse(content={
+            "success": True,
+            "business": safe_business,
+            "phone_numbers": phones_result.data or []
+        })
+
+    except Exception as e:
+        log(f"Error getting business settings: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/api/dashboard/businesses")
+async def list_businesses():
+    """List all businesses (for admin view)"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return JSONResponse(content={"error": "Database not configured"}, status_code=500)
+
+    try:
+        result = supabase.table('businesses').select('id, business_name, owner_name, owner_email, industry, status, created_at').execute()
+
+        return JSONResponse(content={
+            "success": True,
+            "businesses": result.data or []
+        })
+
+    except Exception as e:
+        log(f"Error listing businesses: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 # ======================== Scheduler Setup ========================
 # Initialize scheduler for daily digest

@@ -2,6 +2,6 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python bolt_realtime.py"
+startCommand = "python3 bolt_realtime.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

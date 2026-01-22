@@ -1,1 +1,1 @@
-web: python bolt_realtime.py
+web: python3 bolt_realtime.py
