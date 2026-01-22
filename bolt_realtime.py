@@ -1304,11 +1304,18 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
         if one_hour_later.minute > 0:
             next_slot += timedelta(hours=1)
 
-        log(f"[CALENDAR] Mock slot: {next_slot.strftime('%A at %I%p').replace(' 0', ' ')}")
-        return [{
-            "datetime": next_slot.isoformat(),
-            "display": f"{next_slot.strftime('%A at %I%p').lower().replace(' 0', ' ')}"
-        }]
+        # Return requested number of mock slots
+        mock_slots = []
+        current_slot = next_slot
+        for i in range(num_slots):
+            mock_slots.append({
+                "datetime": current_slot.isoformat(),
+                "display": f"{current_slot.strftime('%A at %I%p').lower().replace(' 0', ' ')}"
+            })
+            current_slot += timedelta(hours=1)
+
+        log(f"[CALENDAR] Mock slots: {[s['display'] for s in mock_slots]}")
+        return mock_slots
 
     try:
         log("[CALENDAR] Attempting to load Google Calendar credentials...")
@@ -1442,7 +1449,9 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
 
         log(f"[CALENDAR] Starting search from {current_check.strftime('%Y-%m-%d %H:%M')} to {max_search_date.strftime('%Y-%m-%d %H:%M')}")
 
-        while current_check < max_search_date:
+        available_slots = []
+
+        while current_check < max_search_date and len(available_slots) < num_slots:
             slots_checked += 1
             # Check if this hour is within operating hours
             if current_check.hour >= OPEN_HOUR and current_check.hour <= LAST_APPOINTMENT_HOUR:
@@ -1469,16 +1478,21 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
                             break
 
                 if not conflict:
-                    # Found first available slot!
+                    # Found an available slot!
                     day_name = current_check.strftime("%A")
                     time_display = current_check.strftime("%I%p").lower().replace('0', '', 1) if current_check.strftime("%I%p").startswith('0') else current_check.strftime("%I%p").lower()
 
-                    log(f"[CALENDAR] ✓ FOUND available slot after checking {slots_checked} slots: {day_name} at {time_display}")
+                    log(f"[CALENDAR] ✓ FOUND available slot #{len(available_slots)+1} after checking {slots_checked} slots: {day_name} at {time_display}")
 
-                    return [{
+                    available_slots.append({
                         "datetime": slot_iso,
                         "display": f"{day_name} at {time_display}"
-                    }]
+                    })
+
+                    # If we have enough slots, return them
+                    if len(available_slots) >= num_slots:
+                        log(f"[CALENDAR] ✓ Found all {num_slots} requested slots")
+                        return available_slots
 
             # Move to next hour
             current_check += timedelta(hours=1)
@@ -1486,6 +1500,11 @@ def get_available_calendar_slots(days_ahead: int = 14, num_slots: int = 1) -> li
             # If we've gone past last appointment hour, jump to next day at 9am
             if current_check.hour > LAST_APPOINTMENT_HOUR or current_check.hour < OPEN_HOUR:
                 current_check = (current_check + timedelta(days=1)).replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
+
+        # Return whatever slots we found (could be less than requested)
+        if available_slots:
+            log(f"[CALENDAR] ✓ Found {len(available_slots)} available slots (requested {num_slots})")
+            return available_slots
 
         # No slots found
         log(f"[CALENDAR] ✗ No available slots found in next {days_ahead} days after checking {slots_checked} slots")

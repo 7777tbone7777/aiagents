@@ -1,868 +1,236 @@
 # CLAUDE.md
 
-This file provides comprehensive guidance to Claude Code when working with the AI Agents platform.
+This file provides guidance to Claude Code when working with the AI Agents platform.
 
 ## Project Overview
 
-**Bolt AI Platform** - A multi-tenant AI voice agent system that enables businesses to have AI-powered phone assistants handle customer calls 24/7. The platform conducts real-time voice conversations, books appointments, answers questions, and provides detailed analytics.
+**Bolt AI Platform** - A multi-tenant AI voice agent system that enables businesses to have AI-powered phone assistants handle customer calls 24/7.
 
-### Three Versions (Evolution)
+### Current Production Stack
 
-1. **`app.py`** (11KB) - Prototype
-   - Basic Flask app with Twilio voice webhooks
-   - OpenAI chat completions API
-   - ElevenLabs TTS (with Twilio Polly fallback)
-   - In-memory sessions only
-   - Best for: Simple demos and testing
-
-2. **`ag.py`** (27KB) - Extended
-   - Adds Google Sheets logging
-   - SMS/email follow-ups (Twilio + SendGrid)
-   - Basic calendar appointment parsing
-   - Disposition tracking
-   - Best for: Small-scale production with manual tracking
-
-3. **`bolt_realtime.py`** (109KB) - Production Platform ⭐ **CURRENT**
-   - FastAPI + WebSocket architecture
-   - **OpenAI Realtime API** (sub-second voice responses!)
-   - Supabase multi-tenant database
-   - Business account system with custom configurations
-   - Google Calendar integration with natural language parsing
-   - Automated email workflows (instant alerts + daily digests)
-   - Railway deployment ready
-   - Best for: **Production use with multiple businesses**
+- **Web Framework**: FastAPI (async)
+- **Voice Platform**: ElevenLabs Conversational AI (primary) or OpenAI Realtime API (fallback)
+- **Telephony**: Twilio Programmable Voice + Media Streams
+- **Database**: Supabase (PostgreSQL)
+- **Calendar**: Google Calendar API
+- **Email**: Resend
+- **Deployment**: Railway (divine-reprieve service)
 
 ---
 
-## Production Platform Architecture (`bolt_realtime.py`)
+## Voice Platform Configuration
 
-### Technology Stack
+### ElevenLabs Conversational AI (Recommended)
 
-- **Web Framework**: FastAPI (async)
-- **Real-time**: WebSocket (Twilio Media Streams ↔ OpenAI Realtime API)
-- **Database**: Supabase (PostgreSQL)
-- **Voice**: Twilio Programmable Voice
-- **AI**: OpenAI Realtime API (`gpt-4o-realtime-preview-2024-10-01`)
-- **TTS**: ElevenLabs (premium voice synthesis) - NEW!
-- **Calendar**: Google Calendar API
-- **Email**: Resend (primary) or SMTP (fallback)
-- **Scheduler**: APScheduler (daily digests)
-- **Deployment**: Railway
-
-### ElevenLabs Premium Voice Integration
-
-**New as of Nov 2024**: The platform now supports ElevenLabs for premium, natural-sounding voice synthesis.
-
-#### How It Works
-
-The platform uses a **hybrid architecture**:
-1. **OpenAI Realtime API** - Handles conversation intelligence (understanding user speech, generating responses)
-2. **ElevenLabs** - Handles voice synthesis (text-to-speech only)
-
-This gives you the best of both worlds: OpenAI's powerful conversation AI + ElevenLabs' premium voice quality.
-
-#### Configuration
+The platform uses ElevenLabs Conversational AI for natural voice conversations with Twilio.
 
 **Environment Variables:**
 ```bash
-ELEVENLABS_API_KEY=your_api_key_here
-ELEVENLABS_VOICE_ID=voice_id_here  # e.g., JBFqnCBsd6RMkjVDRZzb for George (British male)
+USE_ELEVENLABS_CONVERSATIONAL_AI=true
+ELEVENLABS_API_KEY=your_api_key
+ELEVENLABS_AGENT_ID=agent_xxx  # From ElevenLabs dashboard
 ```
 
-**Voice Selection:**
-- Browse voices at: https://elevenlabs.io/app/voice-library
-- Copy voice ID from any voice (Default Voices or My Voices)
-- Update `ELEVENLABS_VOICE_ID` in Railway environment variables
-- Voice changes take effect on next deployment (no code changes needed!)
+**Critical Agent Settings** (configured via ElevenLabs API or dashboard):
+- `user_input_audio_format`: `ulaw_8000` (Twilio's native format)
+- `agent_output_audio_format`: `ulaw_8000` (Twilio's native format)
 
-#### Technical Implementation Details
+**Audio Flow:**
+```
+Twilio (ulaw_8000) → Server → ElevenLabs (ulaw_8000)
+ElevenLabs (ulaw_8000) → Server → Twilio (ulaw_8000)
+```
+No audio conversion needed - forward directly.
 
-**CRITICAL: Text-Only Mode**
-When using ElevenLabs, the OpenAI Realtime API is configured for **text-only output**:
-```python
-session_config["modalities"] = ["text"]  # No audio output from OpenAI
+### OpenAI Realtime API (Fallback)
+
+When `USE_ELEVENLABS_CONVERSATIONAL_AI=false` or not set:
+
+```bash
+OPENAI_API_KEY=sk-xxx
+OPENAI_MODEL=gpt-4o-realtime-preview-2024-12-17  # Latest model
 ```
 
-**Why?** We only want OpenAI to generate text responses, then we send that text to ElevenLabs for voice synthesis.
+---
 
-**CRITICAL: Manual Response Triggering**
-In text-only mode, you MUST manually trigger OpenAI responses after user speech:
-```python
-# After user transcription completes
-if USE_ELEVENLABS:
-    await openai_ws.send(json.dumps({"type": "response.create"}))
-```
+## Database Schema
 
-**Why?** The `server_vad` turn detection doesn't automatically trigger responses in text-only mode like it does in audio mode.
-
-**Event Handling:**
-- Listen for `response.done` events (NOT `response.text.done`)
-- Extract text from nested structure: `response['response']['output'][0]['content'][0]['text']`
-- Send text to ElevenLabs for TTS generation
-- Receive μ-law audio directly (no conversion needed!)
-
-#### Voice Settings
-
-Control speech characteristics in `elevenlabs_tts_sync()` function:
-
-```python
-client.text_to_speech.convert(
-    voice_id=ELEVENLABS_VOICE_ID,
-    text=text,
-    model_id="eleven_multilingual_v2",  # Model affects speed/quality
-    voice_settings=VoiceSettings(
-        stability=0.7,        # 0.0-1.0: Higher = more consistent, slower speech
-        similarity_boost=0.75, # 0.0-1.0: Higher = more similar to original voice
-        style=0.0,            # 0.0-1.0: Style exaggeration (keep at 0 for natural)
-        use_speaker_boost=True # Enhances clarity
-    ),
-    output_format="ulaw_8000"  # Direct μ-law for Twilio (no conversion!)
-)
-```
-
-**Model Options (affecting speed/latency):**
-- `eleven_turbo_v2_5` - Fastest, lowest latency (may sound rushed)
-- `eleven_multilingual_v2` - Balanced speed and quality ⭐ **RECOMMENDED**
-- `eleven_monolingual_v1` - Slowest, most deliberate speech
-
-**Adjusting Speech Speed:**
-1. **Increase stability** (0.7 → 0.8 or 0.9) for slower, more measured speech
-2. **Change model** to eleven_monolingual_v1 for most deliberate pacing
-3. **Add punctuation** in prompts (commas, periods) to add natural pauses
-
-#### Common Issues & Solutions
-
-**Issue 1: Call hangs up after first response**
-- **Cause:** Missing `response.create` trigger after user speech
-- **Fix:** Ensure `response.create` is sent after `conversation.item.input_audio_transcription.completed`
-
-**Issue 2: Responses repeated twice**
-- **Cause:** Both `response.done` and `response.text.done` handlers active
-- **Fix:** Only handle text extraction in `response.done` (remove `response.text.done` handler)
-
-**Issue 3: Voice ID not working**
-- **Cause:** Using Default Voice ID without proper access
-- **Fix:** Use voices from "My Voices" in ElevenLabs dashboard, or ensure paid plan for Default Voices
-
-**Issue 4: Speech too fast/slow**
-- **Fix:** Adjust `stability` setting (higher = slower) and/or change model
-
-#### Performance Notes
-
-- **Latency:** ~200-400ms for ElevenLabs TTS generation (acceptable for phone calls)
-- **Audio Quality:** Significantly better than OpenAI's built-in voices
-- **Cost:** ElevenLabs charges per character (check your plan limits)
-- **Format:** Direct μ-law output eliminates need for audio conversion (faster!)
-
-### Database Schema
-
-#### `businesses` Table
-Multi-tenant business accounts with custom configurations.
-
+### `businesses` Table
 ```sql
 id                  UUID PRIMARY KEY
-business_name       TEXT              -- e.g., "Bolt AI Group"
-owner_name          TEXT              -- Business owner's name
-owner_email         TEXT              -- For receiving alerts/digests
-industry            TEXT              -- barber, restaurant, gym, doctor, etc.
-agent_name          TEXT              -- AI agent's name (e.g., "Ava")
-capabilities        JSONB             -- ["appointments", "orders", "support"]
-google_calendar_id  TEXT              -- Google Calendar email for booking
-plan                TEXT              -- pricing tier
-status              TEXT              -- active, suspended, cancelled
-created_at          TIMESTAMP
-updated_at          TIMESTAMP
+business_name       TEXT
+owner_email         TEXT
+industry            TEXT
+agent_name          TEXT
+google_calendar_id  TEXT
 ```
 
-#### `phone_numbers` Table
-Maps Twilio phone numbers to businesses.
-
+### `phone_numbers` Table
 ```sql
 id              UUID PRIMARY KEY
 business_id     UUID REFERENCES businesses(id)
-phone_number    TEXT UNIQUE       -- E.164 format: +1XXXXXXXXXX
-status          TEXT              -- active, inactive
-created_at      TIMESTAMP
+phone_number    TEXT UNIQUE  -- E.164 format: +1XXXXXXXXXX
 ```
 
-#### `calls` Table
-Call records with status and duration.
-
+### `calls` Table
 ```sql
 id              UUID PRIMARY KEY
 business_id     UUID REFERENCES businesses(id)
-call_sid        TEXT UNIQUE       -- Twilio CallSid
-from_number     TEXT              -- Caller's phone
-to_number       TEXT              -- Business phone number
-direction       TEXT              -- inbound, outbound
-status          TEXT              -- in-progress, completed, failed, busy, no-answer
-duration        INTEGER           -- Call duration in seconds
-created_at      TIMESTAMP
-updated_at      TIMESTAMP
-```
-
-#### `call_transcripts` Table
-Turn-by-turn conversation logs.
-
-```sql
-id              UUID PRIMARY KEY
-call_id         UUID REFERENCES calls(id)
-role            TEXT              -- user, assistant, system
-content         TEXT              -- Spoken/generated text
-created_at      TIMESTAMP
-```
-
-#### `leads` Table
-Customer information captured during calls.
-
-```sql
-id              UUID PRIMARY KEY
-business_id     UUID REFERENCES businesses(id)
-phone_number    TEXT
-name            TEXT
-email           TEXT
-company         TEXT
-industry        TEXT
-notes           TEXT
-status          TEXT              -- qualified, not-interested, dnc, callback
-created_at      TIMESTAMP
-updated_at      TIMESTAMP
+call_sid        TEXT UNIQUE
+from_number     TEXT
+to_number       TEXT
+status          TEXT
+duration        INTEGER
 ```
 
 ---
 
-## Call Flow Architecture
-
-### Inbound Call Flow (bolt_realtime.py)
-
-```
-1. Customer dials business phone number
-   ↓
-2. Twilio receives call → webhook POST /inbound
-   ↓
-3. Server queries database:
-   - Lookup business by to_number (phone_numbers table)
-   - Load business configuration
-   - Create call record in database
-   ↓
-4. Server returns TwiML with <Connect><Stream>
-   - Opens WebSocket connection to /media-stream
-   ↓
-5. Bi-directional WebSocket established:
-   [Twilio Media Stream] ←→ [Server] ←→ [OpenAI Realtime API]
-   - Twilio sends audio chunks (mulaw, base64)
-   - Server forwards to OpenAI as PCM16
-   - OpenAI responds with PCM16 audio + transcripts
-   - Server forwards audio back to Twilio
-   ↓
-6. Real-time conversation happens:
-   - Sub-second latency responses
-   - Conversation tracked in session
-   - Transcripts saved to database
-   ↓
-7. During conversation:
-   - Parse for appointment times ("tomorrow at 3pm")
-   - Create Google Calendar event if booking detected
-   - Capture lead information (name, email, company)
-   ↓
-8. Call ends:
-   - Update call record (status: completed, duration)
-   - Save final transcript
-   - Send follow-up email with appointment details
-   ↓
-9. Post-call automation:
-   - Instant email alert to business owner
-   - Daily digest scheduled for 9 AM (APScheduler)
-```
-
-### Outbound Call Flow (ag.py / app.py)
-
-```
-1. HTTP POST /outbound?to=+1XXX&lead_name=John&company=Acme
-   ↓
-2. Server initiates Twilio call
-   ↓
-3. Twilio calls customer → webhook POST /voice
-   ↓
-4. Server returns TwiML with greeting + <Gather input="speech">
-   ↓
-5. Conversation loop:
-   a. Customer speaks → Twilio transcribes
-   b. POST /ai with SpeechResult
-   c. Server calls OpenAI chat completion
-   d. Generate TTS audio (ElevenLabs or Polly)
-   e. Return TwiML with audio + <Gather>
-   f. Repeat until opt-out or silence
-   ↓
-6. Call completes → POST /status callback
-   ↓
-7. Send SMS + email follow-up
-```
-
----
-
-## API Endpoints Reference
-
-### bolt_realtime.py (FastAPI)
+## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/inbound` | Twilio webhook for incoming calls (returns TwiML) |
-| POST | `/outbound` | Initiate outbound call (requires business_id, to_number) |
-| WS | `/media-stream` | WebSocket for Twilio Media Streams ↔ OpenAI Realtime |
-| GET | `/health` | Health check endpoint |
-| POST | `/setup-database` | Initialize Supabase tables (dev only) |
-| GET | `/` | Dashboard HTML (shows config status) |
-
-### ag.py / app.py (Flask)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/outbound` | Initiate outbound call |
-| POST | `/voice` | Twilio webhook for call start (greeting) |
-| POST | `/ai` | Conversation loop handler |
-| GET | `/audio/<token>.mp3` | Serve cached ElevenLabs audio |
-| POST | `/status` | Call completion callback (ag.py only) |
-| GET | `/health` | Health check |
+| POST | `/voice/incoming` | Twilio webhook for incoming calls |
+| WS | `/media-stream` | WebSocket for Twilio ↔ Voice AI |
+| GET | `/health` | Health check (shows uptime, active calls) |
 
 ---
 
-## Configuration Guide
+## Inbound Call Flow
 
-### Environment Variables
-
-#### Required (All Versions)
-
-```bash
-OPENAI_API_KEY=sk-proj-xxx              # OpenAI API key
-TWILIO_ACCOUNT_SID=ACxxx                # Twilio account SID
-TWILIO_AUTH_TOKEN=xxx                   # Twilio auth token
-TWILIO_NUMBER=+1XXXXXXXXXX              # Your Twilio phone number
+```
+1. Customer dials Twilio number
+   ↓
+2. Twilio POST → /voice/incoming
+   ↓
+3. Server looks up business by phone number (Supabase)
+   ↓
+4. Returns TwiML: <Connect><Stream url="/media-stream">
+   ↓
+5. WebSocket established: Twilio ↔ Server ↔ ElevenLabs
+   ↓
+6. Real-time voice conversation
+   ↓
+7. Call ends → Email notification sent
 ```
 
-#### Required (bolt_realtime.py only)
+---
 
+## Environment Variables
+
+### Required
 ```bash
-SUPABASE_URL=https://xxx.supabase.co    # Supabase project URL
-SUPABASE_SERVICE_ROLE_KEY=xxx           # Supabase service role key (not anon key!)
+# Twilio
+TWILIO_ACCOUNT_SID=ACxxx
+TWILIO_AUTH_TOKEN=xxx
+TWILIO_PHONE_NUMBER=+1XXXXXXXXXX
+
+# Database
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=xxx  # or SUPABASE_KEY
+
+# Voice AI (choose one)
+USE_ELEVENLABS_CONVERSATIONAL_AI=true
+ELEVENLABS_API_KEY=xxx
+ELEVENLABS_AGENT_ID=agent_xxx
+# OR
+OPENAI_API_KEY=sk-xxx
 ```
 
-#### Email Configuration (bolt_realtime.py, ag.py)
-
-**Option A: Resend (Recommended)**
+### Optional
 ```bash
+# Email
 RESEND_API_KEY=re_xxx
-FROM_EMAIL=noreply@yourdomain.com
-```
 
-**Option B: SMTP Fallback**
-```bash
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-FROM_EMAIL=your-email@gmail.com
-```
-
-#### Google Calendar (bolt_realtime.py, ag.py)
-
-```bash
-GOOGLE_CALENDAR_EMAIL=yourbusiness@gmail.com
-GOOGLE_CALENDAR_SERVICE_ACCOUNT=/path/to/service-account.json
-
-# OR inline JSON:
+# Google Calendar
 GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
-```
-
-**Setup Instructions:**
-1. Create Google Cloud service account
-2. Enable Google Calendar API
-3. Share target calendar with service account email
-4. Download JSON key file
-
-#### Optional Configuration
-
-```bash
-# AI Voice & Behavior
-VOICE=echo                              # alloy, echo, fable, onyx, nova, shimmer
-TEMPERATURE=0.8                         # 0.0-1.0 (higher = more creative)
-OPENAI_MODEL=gpt-4o-mini               # For app.py/ag.py only
-
-# Business Branding
-AGENT_NAME=Ava
-COMPANY_NAME=Bolt AI Group
-PRODUCT_PITCH="Your AI receptionist that never misses a call"
-MONTHLY_PRICE=$199
-
-# Call Settings
-MAX_CALL_DURATION=3600                  # Max call length in seconds (1 hour)
-WEBSOCKET_PING_INTERVAL=20              # WebSocket keepalive (seconds)
-WEBSOCKET_PING_TIMEOUT=10
+GOOGLE_CALENDAR_EMAIL=calendar@gmail.com
 
 # Deployment
-PORT=5000                               # Server port (Railway sets automatically)
-PUBLIC_BASE_URL=https://xxx.ngrok.app   # Override auto-detection
-RAILWAY_PUBLIC_DOMAIN=xxx.railway.app   # Set by Railway automatically
-```
-
-#### ElevenLabs Premium TTS (bolt_realtime.py - RECOMMENDED)
-
-```bash
-ELEVENLABS_API_KEY=your_api_key              # Get from elevenlabs.io
-ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb     # Voice ID (e.g., George - British male)
-```
-
-**Notes:**
-- When both variables are set, ElevenLabs is automatically enabled
-- Provides significantly better voice quality than OpenAI's built-in voices
-- Browse voices at: https://elevenlabs.io/app/voice-library
-- Voice ID can be changed in Railway without code changes
-- Also supported in app.py and ag.py for older versions
-
----
-
-## Development Setup
-
-### Prerequisites
-
-```bash
-python3 --version   # 3.9+
-```
-
-### Installation
-
-```bash
-# Clone and navigate to project
-cd ~/github-repos/aiagents
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies (production platform)
-pip install -r requirements.txt
-
-# OR install manually:
-pip install fastapi uvicorn websockets twilio openai supabase resend \
-    google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client \
-    apscheduler python-dotenv certifi
-```
-
-### Local Development
-
-```bash
-# 1. Copy environment variables
-cp .env.example .env
-# Edit .env with your API keys
-
-# 2. Start ngrok (required for Twilio webhooks)
-ngrok http 5000
-# Copy the https://xxx.ngrok.app URL
-
-# 3. Run the platform
-python bolt_realtime.py
-# Server starts on http://0.0.0.0:5000
-
-# 4. Configure Twilio webhook
-# Go to Twilio Console → Phone Numbers → Your Number
-# Set "A CALL COMES IN" webhook to: https://xxx.ngrok.app/inbound
-```
-
-### Testing
-
-```bash
-# Health check
-curl http://localhost:5000/health
-
-# Setup database (first time only)
-curl -X POST http://localhost:5000/setup-database
-
-# Place test call (requires business_id from database)
-curl -X POST "http://localhost:5000/outbound" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "business_id": "xxx-uuid-xxx",
-    "to_number": "+1XXXXXXXXXX",
-    "lead_name": "John Doe",
-    "lead_company": "Acme Corp"
-  }'
+PUBLIC_BASE_URL=https://xxx.railway.app  # Auto-detected on Railway
 ```
 
 ---
 
 ## Deployment (Railway)
 
-### Railway Setup
+**Service**: divine-reprieve (in divine-reprieve project)
 
-1. **Create new Railway project**
-   ```bash
-   railway login
-   railway init
-   ```
+```bash
+# Deploy
+railway up --service divine-reprieve
 
-2. **Add Supabase database**
-   - Go to Railway dashboard → Add → Supabase
-   - Copy connection details
+# Check logs
+railway logs --service divine-reprieve
 
-3. **Configure environment variables**
-   - Add all required env vars from Configuration Guide above
-   - Railway automatically sets: `PORT`, `RAILWAY_PUBLIC_DOMAIN`
-
-4. **Deploy**
-   ```bash
-   railway up
-   ```
-
-5. **Configure Twilio webhook**
-   - Get Railway URL: `https://xxx.railway.app`
-   - Twilio Console → Phone Numbers → Your Number
-   - Set "A CALL COMES IN": `https://xxx.railway.app/inbound`
-
-### Railway Configuration Files
-
-**`Procfile`**
-```
-web: python bolt_realtime.py
+# Check health
+curl https://divine-reprieve-production-5080.up.railway.app/health
 ```
 
-**`railway.toml`**
-```toml
-[build]
-builder = "NIXPACKS"
-
-[deploy]
-startCommand = "python bolt_realtime.py"
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 10
-```
+**Twilio Webhook Configuration:**
+- Voice webhook: `https://divine-reprieve-production-5080.up.railway.app/voice/incoming`
 
 ---
 
-## Business Logic Deep Dive
+## ElevenLabs Agent Management
 
-### System Prompt (bolt_realtime.py:409-430)
+Use the API to update agent settings:
 
-The AI agent's behavior is controlled by a dynamic system prompt that adapts based on the business's industry:
+```bash
+# Get agent config
+curl 'https://api.elevenlabs.io/v1/convai/agents/AGENT_ID' \
+  -H 'xi-api-key: YOUR_API_KEY'
 
-```python
-# Industry-specific pitches
-if industry == "barber" or industry == "salon":
-    "Our AI books haircut appointments 24/7, sends reminders..."
-elif industry == "restaurant":
-    "Our AI takes reservations and takeout orders any time..."
-elif industry == "gym":
-    "Our AI books class reservations, answers membership questions..."
-elif industry == "doctor" or industry == "dental":
-    "Our AI schedules patient appointments, handles rescheduling..."
-```
-
-**Conversation Steps:**
-1. Ask what type of business they have
-2. Explain relevant benefits for their industry
-3. Ask if they'd like to schedule a demo
-4. Capture name and email if interested
-
-### Appointment Parsing (ag.py:195-279)
-
-Natural language time detection using regex patterns:
-
-```python
-# Supported patterns:
-"tomorrow at 3pm"           → datetime: tomorrow 3:00 PM
-"tomorrow at 2:30pm"        → datetime: tomorrow 2:30 PM
-"next Tuesday at 10am"      → datetime: next Tuesday 10:00 AM
-"Friday at 4 p.m."          → datetime: this Friday 4:00 PM
-```
-
-When detected:
-1. Parse time string → datetime object
-2. Create Google Calendar event (30-min default duration)
-3. Store event ID and link in session
-4. Include in follow-up email
-
-### Email Workflows (bolt_realtime.py)
-
-**Instant Call Alert** (sent when call starts):
-```
-Subject: 🔔 Incoming Call Alert - +1XXXXXXXXXX
-Content: Caller phone, call time, call SID
-Purpose: Real-time notification for business owner
-```
-
-**Follow-up Email** (sent after call completes):
-```
-Subject: Thanks for your time - [Company Name]
-Content:
-  - Conversation summary
-  - Appointment details (if booked) with calendar link
-  - Product pitch recap
-  - Next steps
-```
-
-**Daily Digest** (sent at 9 AM via APScheduler):
-```
-Subject: 📊 Daily Call Report - [Date] (X calls)
-Content:
-  - Total calls, completed, failed, in-progress
-  - Average call duration
-  - Table of recent calls with status
-  - Analytics summary
-```
-
-### Session Management
-
-**In-Memory Sessions (all versions):**
-```python
-SESSIONS = {
-    "CA1234...": {                    # Twilio CallSid
-        "history": deque(maxlen=40),  # Conversation turns
-        "lead": {
-            "name": "John Doe",
-            "company": "Acme",
-            "email": "john@acme.com",
-            "phone": "+1XXXXXXXXXX"
-        },
-        "business_id": "uuid-xxx",
-        "call_id": "uuid-xxx",
-        "appointment": {              # If booked
-            "time": datetime,
-            "event_id": "google-cal-id",
-            "event_link": "https://..."
-        },
-        "disposition": "qualified"
+# Update agent (e.g., change first message)
+curl -X PATCH 'https://api.elevenlabs.io/v1/convai/agents/AGENT_ID' \
+  -H 'xi-api-key: YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "conversation_config": {
+      "agent": {
+        "first_message": "Hey, thanks for calling!"
+      }
     }
-}
+  }'
+
+# Update audio format for Twilio compatibility
+curl -X PATCH 'https://api.elevenlabs.io/v1/convai/agents/AGENT_ID' \
+  -H 'xi-api-key: YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "conversation_config": {
+      "asr": {"user_input_audio_format": "ulaw_8000"},
+      "tts": {"agent_output_audio_format": "ulaw_8000"}
+    }
+  }'
 ```
-
-**Database Persistence (bolt_realtime.py only):**
-- Call records saved to `calls` table
-- Transcripts saved to `call_transcripts` table
-- Lead info saved to `leads` table
-- Sessions cleared from memory after call ends
-
----
-
-## Key Files Reference
-
-### Main Application Files
-
-- **`bolt_realtime.py`** (109KB) - Production FastAPI platform
-  - Lines 29-114: Configuration and globals
-  - Lines 151-191: Database query functions
-  - Lines 233-302: Email sending logic
-  - Lines 409-430: System prompt (industry-specific)
-  - Lines 570-750: WebSocket handler for OpenAI Realtime API
-  - Lines 800-900: Twilio webhook handlers
-
-- **`ag.py`** (27KB) - Extended Flask version with Sheets logging
-  - Lines 131-157: Google Sheets initialization
-  - Lines 169-193: Google Calendar initialization
-  - Lines 195-279: Appointment time parsing
-  - Lines 281-361: Calendar event creation
-  - Lines 409-448: AI reply logic with system prompt
-  - Lines 515-567: Follow-up email/SMS logic
-
-- **`app.py`** (11KB) - Basic Flask prototype
-  - Lines 102-119: System prompt
-  - Lines 122-150: AI reply function
-  - Lines 154-183: ElevenLabs TTS
-  - Lines 210-227: Outbound call initiation
-  - Lines 230-274: Voice webhook (greeting)
-  - Lines 277-319: AI conversation loop
-
-### Supporting Files
-
-- **`setup_database.py`** - Initialize Supabase schema (run once)
-- **`add_demo_business.py`** - Create test business account
-- **`bolt_watchdog.py`** - Health monitoring and auto-restart
-- **`ngrok_watchdog.py`** - Auto-manage ngrok tunnel for local dev
-- **`test_calendar.py`** - Test Google Calendar integration
-- **`requirements.txt`** - Python dependencies
-
-### Documentation Files
-
-- **`CLAUDE.md`** - This file (comprehensive guide)
-- **`RAILWAY_DEPLOYMENT.md`** - Railway deployment guide
-- **`CALENDAR_SETUP.md`** - Google Calendar integration setup
-- **`SCALING_GUIDE.md`** - Scaling considerations for production
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+### Silence on inbound calls
+1. Check ElevenLabs agent audio format is `ulaw_8000` (not `pcm_16000`)
+2. Verify agent doesn't require dynamic variables in first_message
+3. Check Railway logs for WebSocket close codes
 
-#### 1. "No module named 'supabase'" (bolt_realtime.py)
-```bash
-pip install supabase
-```
+### WebSocket closes immediately (Code 1008)
+- Usually means missing dynamic variables
+- Check agent's `first_message` - remove `{{variable}}` placeholders or provide defaults
 
-#### 2. Twilio webhook returns 404
-- Check PUBLIC_BASE_URL is correct HTTPS URL
-- Verify ngrok tunnel is active: `curl http://localhost:4040/api/tunnels`
-- Check Twilio webhook URL matches exactly: `https://xxx.ngrok.app/inbound`
+### "ElevenLabs not installed" warning
+- This is just for the TTS SDK (optional)
+- ElevenLabs Conversational AI uses WebSocket, not the SDK
 
-#### 3. Supabase connection fails
-- Verify `SUPABASE_SERVICE_ROLE_KEY` (not anon key!)
-- Check Supabase dashboard → Settings → API
-- Ensure tables exist: run `setup_database.py`
-
-#### 4. Google Calendar booking fails
-- Service account email must be invited to target calendar
-- Check `GOOGLE_CALENDAR_EMAIL` matches shared calendar
-- Verify service account JSON is valid
-
-#### 5. Email not sending
-- Check Resend API key is valid
-- Verify FROM_EMAIL domain is verified in Resend
-- Check SMTP credentials if using SMTP fallback
-- Review server logs for specific error
-
-#### 6. OpenAI Realtime API connection fails
-- Verify `OPENAI_API_KEY` has Realtime API access (requires waitlist approval)
-- Check WebSocket connection in logs
-- Ensure Twilio Media Streams is enabled on phone number
-
-#### 7. "Railway deployment succeeds but app crashes"
-- Check Railway logs: `railway logs`
-- Verify all env vars are set in Railway dashboard
-- Ensure PORT is not hardcoded (Railway sets dynamically)
-
-### Debug Logging
-
-Enable verbose logging:
-```python
-# Add to top of file for debugging
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
-
-View logs:
-```bash
-# Local development
-python bolt_realtime.py  # stdout
-
-# Railway
-railway logs --service web
-railway logs --tail 100
-```
+### OpenAI model deprecated
+- Update `OPENAI_MODEL` to `gpt-4o-realtime-preview-2024-12-17`
 
 ---
 
-## Performance & Scaling
+## Key Files
 
-### Current Capacity
-- **Concurrent calls**: ~10-20 per instance (WebSocket connections)
-- **Database**: Supabase free tier = 500MB, upgrade as needed
-- **Email**: Resend free tier = 3,000/month
-
-### Scaling Recommendations
-
-1. **Horizontal scaling** (Railway auto-scaling):
-   - Enable Railway autoscaling in dashboard
-   - Each instance handles 10-20 calls
-   - Load balancer distributes connections
-
-2. **Database optimization**:
-   - Add indexes on frequently queried columns
-   - Archive old call transcripts monthly
-   - Use Supabase connection pooling
-
-3. **Session management**:
-   - Move SESSIONS dict to Redis for shared state
-   - Enables load balancing across multiple instances
-
-4. **Email rate limiting**:
-   - Upgrade Resend plan if >3k emails/month
-   - Implement email queue with Celery for high volume
+- **`bolt_realtime.py`** - Main application (FastAPI)
+- **`requirements.txt`** - Python dependencies
 
 ---
 
-## Security Best Practices
-
-1. **API Keys**: Never commit to git, use environment variables
-2. **Supabase**: Use service role key (not anon key) server-side only
-3. **Twilio**: Validate webhook signatures (not implemented yet)
-4. **Google Calendar**: Service account JSON should be in secure storage
-5. **Database**: Use RLS policies in Supabase for multi-tenant isolation
-
----
-
-## Code Modification Guide
-
-### Change Agent Personality
-Edit system prompt in `bolt_realtime.py:409-430` or `ag.py:409-430`
-
-### Add New Business Capability
-1. Update `businesses.capabilities` JSONB field
-2. Modify system prompt to reference new capability
-3. Add handling logic in conversation flow
-
-### Customize Email Templates
-- Instant alert: `bolt_realtime.py:304-337`
-- Follow-up email: `bolt_realtime.py` (search for "send_email" calls)
-- Daily digest: `bolt_realtime.py:339-450`
-
-### Add New API Endpoint
-```python
-@app.post("/your-endpoint")
-async def your_endpoint(request: Request):
-    # Your logic here
-    return JSONResponse({"status": "success"})
-```
-
-### Modify Call Flow
-- Inbound greeting: `bolt_realtime.py` `/inbound` endpoint
-- Conversation logic: WebSocket handler in `/media-stream`
-- Post-call actions: Call completion handler
-
----
-
-## Version History & Upgrade Path
-
-### Migration from app.py → ag.py
-- Add Google Sheets environment variables
-- Add SendGrid/SMTP configuration
-- Update outbound call to include email parameter
-- No code changes needed
-
-### Migration from ag.py → bolt_realtime.py
-1. Set up Supabase database
-2. Run `setup_database.py`
-3. Create business account with `add_demo_business.py`
-4. Update environment variables (remove Google Sheets, add Supabase)
-5. Change Twilio webhooks from `/voice` to `/inbound`
-6. Deploy to Railway
-
-**Breaking Changes:**
-- Session storage moved from memory to database
-- API endpoints changed (Flask → FastAPI)
-- Outbound call requires business_id instead of lead params
-- TTS changed from ElevenLabs to OpenAI Realtime (faster!)
-
----
-
-## Additional Resources
-
-- [OpenAI Realtime API Docs](https://platform.openai.com/docs/guides/realtime)
-- [Twilio Media Streams Guide](https://www.twilio.com/docs/voice/media-streams)
-- [Supabase Python Client](https://supabase.com/docs/reference/python/introduction)
-- [Railway Deployment Docs](https://docs.railway.app/)
-- [Google Calendar API Quickstart](https://developers.google.com/calendar/api/quickstart/python)
-
----
-
-## Quick Reference: Which File to Use?
-
-| Use Case | File | Reason |
-|----------|------|--------|
-| **Quick demo/prototype** | `app.py` | Simplest setup, no database |
-| **Small business (1 phone)** | `ag.py` | Google Sheets tracking, follow-ups |
-| **Production (multi-tenant)** | `bolt_realtime.py` | Database, fastest responses, scalable |
-| **Local development** | Any + ngrok | Use ngrok_watchdog.py for auto-tunnel |
-| **Production deployment** | `bolt_realtime.py` | Railway ready, monitoring included |
-
----
-
-*Last updated: 2024-11-24*
-*For questions or issues, check troubleshooting section or review Railway logs.*
+*Last updated: 2026-01-22*

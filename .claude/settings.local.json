@@ -40,7 +40,10 @@
       "Bash(source:*)",
       "Bash(ls:*)",
       "Bash(launchctl kickstart:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(railway projects:*)",
+      "Bash(railway service:*)",
+      "Bash(supabase --version:*)"
     ],
     "deny": [],
     "ask": []
