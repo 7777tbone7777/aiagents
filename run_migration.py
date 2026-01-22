@@ -6,9 +6,13 @@ Uses the Supabase Python client to add columns
 import os
 from supabase import create_client
 
-# Get from Railway environment
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://owffvdmmvcnbnjaprqis.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93ZmZ2ZG1tdmNuYm5qYXBycWlzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MDk4NTg4OSwiZXhwIjoyMDc2NTYxODg5fQ.0pt1sEoH8kCELmELgaEZJhrmneB80uPGgoQzzdTpB-M")
+# Get from environment (no defaults - must be set)
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("ERROR: Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables")
+    exit(1)
 
 print(f"Connecting to Supabase: {SUPABASE_URL[:40]}...")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)

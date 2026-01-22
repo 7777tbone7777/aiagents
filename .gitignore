@@ -3,6 +3,13 @@
 .env.local
 .env.*.local
 
+# Node
+node_modules/
+package-lock.json
+
+# Scripts with hardcoded secrets (use env vars instead)
+run_migration.py
+
 # Python
 venv/
 __pycache__/
