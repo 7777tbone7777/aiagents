@@ -113,7 +113,7 @@ PUBLIC_BASE = get_public_url()  # Railway in production, ngrok for local dev
 # AI configuration
 VOICE = os.getenv("VOICE", "echo")  # Options: alloy, echo, fable, onyx, nova, shimmer
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.8"))
-MODEL = "gpt-4o-realtime-preview-2024-10-01"  # OpenAI Realtime API model
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-realtime-preview-2024-12-17")  # OpenAI Realtime API model
 
 # WebSocket configuration
 MAX_CALL_DURATION = int(os.getenv("MAX_CALL_DURATION", "3600"))  # 1 hour default (seconds)
@@ -265,7 +265,7 @@ async def connect_to_openai_with_retry(max_retries=WS_MAX_RETRIES):
 
             openai_ws = await asyncio.wait_for(
                 websockets.connect(
-                    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
+                    f"wss://api.openai.com/v1/realtime?model={MODEL}",
                     extra_headers={
                         "Authorization": f"Bearer {OPENAI_API_KEY}",
                         "OpenAI-Beta": "realtime=v1"
