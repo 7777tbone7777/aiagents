@@ -2009,8 +2009,8 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                                 "user_audio_chunk": data['media']['payload']
                             }
                             await elevenlabs_ws.send(json.dumps(audio_message))
-                        except websockets.exceptions.ConnectionClosed:
-                            log(f"[ElevenLabs] Connection closed while sending audio")
+                        except websockets.exceptions.ConnectionClosed as e:
+                            log(f"[ElevenLabs] Connection closed while sending audio. Code: {e.code if hasattr(e, 'code') else 'unknown'}, Reason: {e.reason if hasattr(e, 'reason') else 'unknown'}")
                             elevenlabs_connected = False
                             break
                         except Exception as e:
@@ -2057,7 +2057,8 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                         log(f"[ElevenLabs DEBUG] Event type: {event_type}, Keys: {list(response.keys())}")
 
                         if event_type == 'conversation_initiation_metadata':
-                            log(f"[ElevenLabs] Conversation initiated")
+                            metadata = response.get('conversation_initiation_metadata_event', {})
+                            log(f"[ElevenLabs] Conversation initiated. Agent config: {json.dumps(metadata, indent=2)[:500]}")
 
                         elif event_type == 'audio':
                             # DEBUG: Log audio_event structure
@@ -2162,8 +2163,8 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                     except Exception as e:
                         log(f"[ElevenLabs] Error processing message: {e}")
 
-            except websockets.exceptions.ConnectionClosed:
-                log(f"[ElevenLabs] WebSocket closed for {call_sid}")
+            except websockets.exceptions.ConnectionClosed as e:
+                log(f"[ElevenLabs] WebSocket closed for {call_sid}. Code: {e.code if hasattr(e, 'code') else 'unknown'}, Reason: {e.reason if hasattr(e, 'reason') else 'unknown'}")
                 elevenlabs_connected = False
             except Exception as e:
                 log(f"[ElevenLabs] Error receiving from ElevenLabs: {e}")
