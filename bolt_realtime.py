@@ -3291,9 +3291,10 @@ async def api_available_slots(request: Request):
         slots = get_available_calendar_slots(days_ahead=days_ahead, num_slots=3)
 
         if slots:
+            slot_list = ", ".join([s['display'] for s in slots[:3]])
             return JSONResponse(content={
                 "success": True,
-                "message": f"The next available slot is {slots[0]['display']}",
+                "message": f"Available appointment times: {slot_list}",
                 "slots": slots
             })
         else:
@@ -3335,10 +3336,11 @@ async def api_check_slot(request: Request):
 
         # Slot not available, suggest alternatives
         if slots:
+            alt_list = ", ".join([s['display'] for s in slots[:3]])
             return JSONResponse(content={
                 "success": True,
                 "available": False,
-                "message": f"That time isn't available. The next open slot is {slots[0]['display']}",
+                "message": f"That time isn't available. Here are some alternatives: {alt_list}",
                 "alternative_slots": slots[:3]
             })
         else:
