@@ -1803,7 +1803,7 @@ This is an implementation call for setting up AI phone agent system.""",
 # ======================== Routes ========================
 @app.get("/", response_class=JSONResponse)
 async def index_page():
-    return {"status": "healthy", "mode": "realtime_api", "platform": "Bolt AI Group"}
+    return {"status": "healthy", "mode": "realtime_api", "platform": COMPANY_NAME}
 
 @app.get("/health", response_class=JSONResponse)
 async def health_check():
