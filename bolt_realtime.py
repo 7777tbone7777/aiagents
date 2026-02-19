@@ -16,6 +16,7 @@ from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect
+from twilio.rest import Client as TwilioClient
 from dotenv import load_dotenv
 from supabase import create_client
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -133,10 +134,11 @@ SMTP_PASS = os.getenv("SMTP_PASS")
 
 # Business configuration
 AGENT_NAME = os.getenv("AGENT_NAME", "Jack")
-COMPANY_NAME = os.getenv("COMPANY_NAME", "Bolt AI Group")
+COMPANY_NAME = os.getenv("COMPANY_NAME", "Criton AI")
 PRODUCT_PITCH = os.getenv("PRODUCT_PITCH", "We build custom AI agents for small businesses that answer every call 24/7, book appointments automatically, handle customer questions, and ensure you never lose business to a missed call")
 MONTHLY_PRICE = os.getenv("MONTHLY_PRICE", "$199")
 CALENDAR_BOOKING_URL = os.getenv("CALENDAR_BOOKING_URL", "")
+TRIAL_SIGNUP_URL = os.getenv("TRIAL_SIGNUP_URL", "https://criton.ai/signup")
 
 # Google Calendar configuration
 GOOGLE_CALENDAR_EMAIL = os.getenv("GOOGLE_CALENDAR_EMAIL", "boltaigroup@gmail.com")
@@ -192,6 +194,21 @@ elif USE_ELEVENLABS:
     print(f"[INFO] ElevenLabs TTS initialized with voice: {ELEVENLABS_VOICE_ID}")
 else:
     print("[INFO] ElevenLabs not configured - using OpenAI voice only")
+
+def send_trial_link_sms(to_number: str) -> bool:
+    """Send the Criton AI trial signup link via SMS."""
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_NUMBER:
+        log("[SMS ERROR] Twilio not configured for SMS")
+        return False
+    try:
+        client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        message = f"Hey! It was great chatting. Here's the link to get started with Criton AI — your 24/7 AI phone assistant: {TRIAL_SIGNUP_URL}"
+        msg = client.messages.create(body=message, from_=TWILIO_NUMBER, to=to_number)
+        log(f"[SMS] Trial link sent to {to_number} - SID: {msg.sid}")
+        return True
+    except Exception as e:
+        log(f"[SMS ERROR] Failed to send to {to_number}: {e}")
+        return False
 
 # ======================== Globals ========================
 app = FastAPI()
@@ -2296,11 +2313,23 @@ async def handle_media_stream(websocket: WebSocket):
 
                         # Configure OpenAI session based on business
                         if industry == 'sales':
-                            greeting = "Hi! I'm Jack with Bolt AI Group. We build AI agents that answer calls 24/7 because missing calls is like missing money. Are you interested in a quick demo, or are you ready to get set up?"
+                            greeting = "Hey there! This is Jack over at Criton AI. I actually just tried reaching you a few minutes ago. You know, the fact that you're calling me back instead of reaching a real person on your end — that's actually the exact problem we solve. We make sure businesses like yours never miss a single call. Got a sec?"
                             system_message = f"""You are {agent_name}, an enthusiastic AI sales agent for {business_name}.
 
 CRITICAL: Your FIRST response must be EXACTLY this greeting word-for-word:
 "{greeting}"
+
+═══════════════════════════════════════════════════════════════
+CONTEXT: CALLBACK SCENARIO
+═══════════════════════════════════════════════════════════════
+
+These callers are returning a missed call from you. USE THIS to your advantage — it's a live proof point. Key stats to weave in naturally:
+- 85% of callers who hit voicemail will call a competitor instead
+- The average small business misses 40% of incoming calls
+- A missed call costs the average service business $200-$1,200 in lost revenue
+
+When they ask "Who is this?" or "Why did you call me?":
+- Say: "We actually just gave you a call because we help [their industry if known, otherwise 'businesses like yours'] stop losing customers to missed calls. Funny enough, you calling me back and getting an AI instead of a person — that's the exact situation your customers deal with when they call you and nobody picks up."
 
 ═══════════════════════════════════════════════════════════════
 AFTER GREETING - BRANCH INTO TWO PATHS:
@@ -2359,6 +2388,11 @@ If they say "demo", "show me", "demonstration", "how does it work", or similar:
 PATH B: SIGNUP MODE (Direct or after demo)
 If they say "sign up", "get started", "let's do it", or YES after demo:
 
+FIRST: Offer to text the trial link:
+- Say: "Awesome! Let me text you a link to get started right now." then call the send_trial_link function.
+- After sending: "Perfect, just sent that over. You should see it pop up any second."
+
+Then continue:
 1. Say: "Great! First, what's your name?"
 2. They tell you their name
 3. ONLY ask for business type if you DON'T already know it from the demo:
@@ -2393,11 +2427,17 @@ CRITICAL CHARACTER SWITCHING:
 - When breaking character after demo, clearly signal: "Alright, so that's how I'd handle calls..."
 - In demo mode, you ARE the ACME receptionist - speak as that character
 - DO NOT announce pauses or say "I'm going to pause" - just switch naturally
-- Outside demo mode, you are Jack from Bolt AI Group
+- Outside demo mode, you are {agent_name} from {business_name}
 
 BUSINESS NAME GENERATION:
 - Auto-generate demo business names as "ACME [BusinessType]"
 - Examples: "ACME HVAC", "ACME Dental", "ACME Barbershop", "ACME Plumbing"
+
+TRIAL LINK RULE:
+- Whenever a caller shows ANY interest (wants demo, wants to sign up, says "sounds interesting", "tell me more", etc.), offer to text them the link: "Want me to text you the link so you can check it out?"
+- If they say yes, call the send_trial_link function immediately
+- If they're about to hang up but seemed even slightly interested, offer: "Before you go, let me shoot you a quick text with the link — no pressure, just so you have it."
+- Only send ONCE per call
 
 STRICT RULES - DO NOT VIOLATE:
 - Keep responses brief (1-2 sentences max)
@@ -2519,6 +2559,16 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                         }
                                     },
                                     "required": ["slot_datetime", "slot_display"]
+                                }
+                            },
+                            {
+                                "type": "function",
+                                "name": "send_trial_link",
+                                "description": "Send the Criton AI trial signup link via text message to the caller's phone. Call this when the caller shows interest, agrees to check it out, or says 'yes' when you offer to text them the link. Do NOT call this more than once per call.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": []
                                 }
                             },
                             {
@@ -2789,6 +2839,21 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                 function_result = {
                                     "success": False,
                                     "message": "Missing required information for booking"
+                                }
+
+                        elif function_name == "send_trial_link":
+                            caller_phone = session.get('caller_phone', '') if session else ''
+                            if caller_phone:
+                                sms_sent = send_trial_link_sms(caller_phone)
+                                function_result = {
+                                    "success": sms_sent,
+                                    "message": "Trial link texted to the caller's phone. Let them know to check their texts." if sms_sent else "Failed to send text. Apologize and offer to email the link instead."
+                                }
+                                log(f"[TRIAL LINK] SMS {'sent' if sms_sent else 'FAILED'} to {caller_phone}")
+                            else:
+                                function_result = {
+                                    "success": False,
+                                    "message": "No phone number available. Ask the caller for their phone number to text the link."
                                 }
 
                         elif function_name == "take_message":
