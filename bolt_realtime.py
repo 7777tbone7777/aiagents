@@ -3506,6 +3506,43 @@ async def api_send_sms_confirmation(request: Request):
         log(f"[API] Error sending SMS: {e}")
         return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
 
+@app.post("/api/sms/send-trial-link")
+async def api_send_trial_link(request: Request):
+    """Send trial signup link via SMS - called by ElevenLabs agent webhook"""
+    try:
+        # Find the most recent active session with a caller_phone
+        caller_phone = None
+        latest_time = None
+        for sid, session in SESSIONS.items():
+            phone = session.get('caller_phone')
+            start = session.get('call_start_time')
+            if phone and start:
+                if latest_time is None or start > latest_time:
+                    latest_time = start
+                    caller_phone = phone
+
+        if not caller_phone:
+            log("[TRIAL LINK] No active session with caller phone found")
+            return JSONResponse(content={
+                "success": False,
+                "message": "No active caller phone found. Ask the caller for their phone number."
+            })
+
+        sms_sent = send_trial_link_sms(caller_phone)
+        if sms_sent:
+            return JSONResponse(content={
+                "success": True,
+                "message": "Trial link texted successfully. Let the caller know to check their texts."
+            })
+        else:
+            return JSONResponse(content={
+                "success": False,
+                "message": "Failed to send text. Apologize and offer to provide the link verbally: criton.ai/signup"
+            })
+    except Exception as e:
+        log(f"[API] Error sending trial link SMS: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
 @app.post("/api/waiting-list/add")
 async def api_add_to_waiting_list(request: Request):
     """Add to waiting list - called by ElevenLabs agent"""
