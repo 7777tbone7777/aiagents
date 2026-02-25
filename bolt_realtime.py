@@ -593,7 +593,98 @@ def send_instant_call_alert(call_sid, caller_phone, call_start_time):
             </div>
 
             <p style="color: #666; font-size: 14px; margin-top: 30px;">
-                This is an automated alert from your Bolt AI phone agent system.
+                This is an automated alert from your Criton AI phone agent system.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    return send_email(BUSINESS_OWNER_EMAIL, subject, body_html)
+
+def send_post_call_summary(call_sid, caller_phone, customer_name=None, customer_email=None,
+                           customer_phone=None, business_type=None, company_name=None,
+                           appointment_display=None, call_start_time=None):
+    """Send post-call summary email with transcript to business owner"""
+    import pytz
+
+    # Calculate duration
+    duration_str = "Unknown"
+    if call_start_time:
+        elapsed = (datetime.now() - call_start_time).total_seconds()
+        mins = int(elapsed // 60)
+        secs = int(elapsed % 60)
+        duration_str = f"{mins}m {secs}s"
+
+    # Format call time in PST
+    call_time_formatted = "Unknown"
+    if isinstance(call_start_time, datetime):
+        pacific = pytz.timezone('America/Los_Angeles')
+        if call_start_time.tzinfo is None:
+            import pytz as tz
+            call_start_time = tz.UTC.localize(call_start_time)
+        call_time_pst = call_start_time.astimezone(pacific)
+        call_time_formatted = call_time_pst.strftime("%B %d, %Y at %I:%M %p PST")
+
+    # Fetch transcript from Supabase
+    transcript_html = "<em>No transcript available</em>"
+    try:
+        supabase = get_supabase_client()
+        if supabase:
+            session = SESSIONS.get(call_sid, {})
+            call_id = session.get('call_id')
+            if call_id:
+                result = supabase.table('call_transcripts').select('role,content').eq('call_id', call_id).order('created_at', desc=False).execute()
+                if result.data:
+                    lines = []
+                    for row in result.data:
+                        role = row.get('role', 'unknown').capitalize()
+                        content = row.get('content', '')
+                        color = '#4CAF50' if role == 'Assistant' else '#2196F3'
+                        lines.append(f'<p style="margin: 4px 0;"><strong style="color: {color};">{role}:</strong> {content}</p>')
+                    transcript_html = '\n'.join(lines)
+    except Exception as e:
+        log(f"[POST-CALL] Error fetching transcript: {e}")
+
+    # Build info rows
+    info_rows = f'<li><strong>Caller Phone:</strong> {caller_phone or "Unknown"}</li>'
+    if customer_name and customer_name != "there":
+        info_rows += f'\n<li><strong>Name:</strong> {customer_name}</li>'
+    if company_name:
+        info_rows += f'\n<li><strong>Company:</strong> {company_name}</li>'
+    if business_type and business_type != "business":
+        info_rows += f'\n<li><strong>Industry:</strong> {business_type}</li>'
+    if customer_email:
+        info_rows += f'\n<li><strong>Email:</strong> {customer_email}</li>'
+    if customer_phone and customer_phone != caller_phone:
+        info_rows += f'\n<li><strong>Alt Phone:</strong> {customer_phone}</li>'
+    if appointment_display:
+        info_rows += f'\n<li><strong>Appointment:</strong> {appointment_display}</li>'
+
+    subject = f"Call Completed - {caller_phone or 'Unknown'} ({duration_str})"
+
+    body_html = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <div style="background-color: #2196F3; color: white; padding: 20px; text-align: center;">
+            <h1 style="margin: 0;">📋 Call Summary</h1>
+        </div>
+
+        <div style="padding: 20px;">
+            <p><strong>Call Details:</strong></p>
+            <ul style="font-size: 16px;">
+                <li><strong>Date/Time:</strong> {call_time_formatted}</li>
+                <li><strong>Duration:</strong> {duration_str}</li>
+                {info_rows}
+            </ul>
+
+            <h3>Transcript</h3>
+            <div style="background-color: #f5f5f5; padding: 15px; border-radius: 8px; font-size: 14px; max-height: 600px; overflow-y: auto;">
+                {transcript_html}
+            </div>
+
+            <p style="color: #666; font-size: 14px; margin-top: 30px;">
+                This is an automated summary from your Criton AI phone agent.
             </p>
         </div>
     </body>
@@ -3077,20 +3168,19 @@ async def status_callback(request: Request):
             else:
                 log(f"No email to send - customer_email: {customer_email}, appointment: {appointment_datetime}")
 
-            # Only send notification to business owner if we collected meaningful data
-            if customer_email or customer_phone or (business_type and business_type != "business") or company_name:
-                log(f"Sending notification to business owner")
-                send_business_owner_notification(
-                    customer_name,
-                    customer_email,
-                    customer_phone or caller_phone,
-                    business_type,
-                    company_name,
-                    None,  # contact_preference no longer used
-                    appointment_display
-                )
-            else:
-                log(f"Skipping business owner notification - no customer data collected")
+            # Always send post-call summary to business owner
+            log(f"Sending post-call summary to business owner")
+            send_post_call_summary(
+                call_sid=call_sid,
+                caller_phone=caller_phone,
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
+                business_type=business_type,
+                company_name=company_name,
+                appointment_display=appointment_display,
+                call_start_time=session.get('call_start_time'),
+            )
 
     # Clean up session
     if call_sid in SESSIONS:
