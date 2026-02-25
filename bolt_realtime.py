@@ -466,18 +466,13 @@ def create_call_record(business_id, from_number, call_sid, to_number):
         return None
 
 def update_call_transcript(call_sid, role, text):
-    """Update call transcript"""
-    session = SESSIONS.get(call_sid)
-    if not session or not SUPABASE:
-        return
-
-    call_id = session.get('call_id')
-    if not call_id:
+    """Update call transcript — inserts into call_transcripts table using Twilio call SID"""
+    if not call_sid or not SUPABASE:
         return
 
     try:
         SUPABASE.table('call_transcripts').insert({
-            "call_id": call_id,
+            "call_sid": call_sid,
             "role": role,
             "content": text
         }).execute()
@@ -630,19 +625,16 @@ def send_post_call_summary(call_sid, caller_phone, customer_name=None, customer_
     transcript_html = "<em>No transcript available</em>"
     try:
         supabase = get_supabase_client()
-        if supabase:
-            session = SESSIONS.get(call_sid, {})
-            call_id = session.get('call_id')
-            if call_id:
-                result = supabase.table('call_transcripts').select('role,content').eq('call_id', call_id).order('created_at', desc=False).execute()
-                if result.data:
-                    lines = []
-                    for row in result.data:
-                        role = row.get('role', 'unknown').capitalize()
-                        content = row.get('content', '')
-                        color = '#4CAF50' if role == 'Assistant' else '#2196F3'
-                        lines.append(f'<p style="margin: 4px 0;"><strong style="color: {color};">{role}:</strong> {content}</p>')
-                    transcript_html = '\n'.join(lines)
+        if supabase and call_sid:
+            result = supabase.table('call_transcripts').select('role,content').eq('call_sid', call_sid).order('created_at', desc=False).execute()
+            if result.data:
+                lines = []
+                for row in result.data:
+                    role = row.get('role', 'unknown').capitalize()
+                    content = row.get('content', '')
+                    color = '#4CAF50' if role == 'Assistant' else '#2196F3'
+                    lines.append(f'<p style="margin: 4px 0;"><strong style="color: {color};">{role}:</strong> {content}</p>')
+                transcript_html = '\n'.join(lines)
     except Exception as e:
         log(f"[POST-CALL] Error fetching transcript: {e}")
 
@@ -2271,15 +2263,13 @@ async def handle_media_stream_elevenlabs(websocket: WebSocket):
                                 log(f"[ElevenLabs] Forwarded agent audio to Twilio")
 
                         elif event_type == 'user_transcript' or event_type == 'agent_transcript':
-                            # Log transcripts (can be saved to database)
                             transcript_text = response.get('text', '')
                             role = 'user' if event_type == 'user_transcript' else 'agent'
                             log(f"[Transcript] {role}: {transcript_text}")
 
-                            # TODO: Save to database
-                            # session = SESSIONS.get(call_sid, {})
-                            # if session:
-                            #     save_transcript(session.get('call_id'), role, transcript_text)
+                            # Save to database
+                            if call_sid and transcript_text:
+                                update_call_transcript(call_sid, role, transcript_text)
 
                         else:
                             log(f"[ElevenLabs] Unhandled event type: {event_type}")
@@ -2977,16 +2967,15 @@ Be friendly, professional, and concise. Keep responses to 1-2 sentences."""
                                     session['customer_name'] = caller_name
 
                                 # Save voicemail to database
-                                call_id = session.get('call_id')
-                                if call_id and SUPABASE:
+                                if call_sid and SUPABASE:
                                     try:
                                         # Store as a transcript entry with type 'voicemail'
                                         SUPABASE.table('call_transcripts').insert({
-                                            "call_id": call_id,
+                                            "call_sid": call_sid,
                                             "role": "voicemail",
                                             "content": f"[{urgency.upper()}] {caller_name or 'Unknown'} ({callback_number or session.get('caller_phone', 'No callback number')}): {message_content}"
                                         }).execute()
-                                        log(f"[VOICEMAIL] Saved to database for call {call_id}")
+                                        log(f"[VOICEMAIL] Saved to database for call {call_sid}")
                                     except Exception as e:
                                         log(f"[VOICEMAIL] Error saving to database: {e}")
 
@@ -3371,8 +3360,8 @@ async def get_call_detail(call_id: str):
 
         call = call_result.data[0]
 
-        # Get transcript for this call
-        transcript_result = supabase.table('call_transcripts').select('*').eq('call_id', call_id).order('created_at', desc=False).execute()
+        # Get transcript for this call (call_transcripts uses Twilio call_sid, not UUID)
+        transcript_result = supabase.table('call_transcripts').select('*').eq('call_sid', call.get('call_sid', '')).order('created_at', desc=False).execute()
 
         return JSONResponse(content={
             "success": True,
